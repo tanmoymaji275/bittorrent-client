@@ -54,11 +54,12 @@ def encode_list(lst: list) -> bytes:
 def encode_dict(d: dict) -> bytes:
     result = b"d"
 
-    # Keys must be sorted lexicographically (as raw bytes)
-    for key in sorted(d.keys()):
-        key_bytes = key.encode()  # keys are always strings
+    def key_to_bytes(k):
+        return k if isinstance(k, bytes) else k.encode()
+
+    for key in sorted(d.keys(), key=lambda k: key_to_bytes(k)):
+        key_bytes = key_to_bytes(key)
         result += encode_bytes(key_bytes)
         result += encode(d[key])
 
     return result + b"e"
-
