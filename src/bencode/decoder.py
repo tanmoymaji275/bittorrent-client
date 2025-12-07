@@ -110,5 +110,4 @@ class BencodeDecoder:
 # ------------------------------------------------
 
 def decode(data: bytes):
-    """Shortcut function: decode and return root bencode object."""
     return BencodeDecoder(data).decode()
