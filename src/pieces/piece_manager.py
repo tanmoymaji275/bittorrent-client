@@ -1,7 +1,7 @@
 import hashlib
 import os
 from pathlib import Path
-from .message_types import BLOCK_LEN
+from peer.message_types import BLOCK_LEN
 
 
 class PieceManager:

@@ -2,7 +2,7 @@ from .peer_connection import PeerConnection
 from .message_types import MessageID
 from .peer_protocol import *
 from .request_pipeline import RequestPipeline
-from .piece_manager import PieceManager
+from pieces.piece_manager import PieceManager
 
 __all__ = [
     "PeerConnection",
