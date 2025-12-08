@@ -52,6 +52,19 @@ class PieceManager:
         return None
 
     # -------------------------------------------------------
+    # Piece selection based on peer's available pieces
+    # -------------------------------------------------------
+    def get_piece_peer_has(self, peer):
+        """
+        Return the next incomplete piece that this peer has.
+        If the peer does not have any useful pieces, return None.
+        """
+        for idx in range(self.num_pieces):
+            if not self.completed[idx] and peer.has_piece(idx):
+                return idx
+        return None
+
+    # -------------------------------------------------------
     # Piece length
     # -------------------------------------------------------
     def get_piece_length(self, index):
