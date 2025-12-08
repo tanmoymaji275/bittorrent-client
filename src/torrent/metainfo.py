@@ -1,6 +1,6 @@
 import hashlib
 from pathlib import Path
-from ..bencode import *
+from bencode import *
 
 
 class TorrentMeta:

@@ -1,7 +1,7 @@
 import aiohttp
 import urllib.parse
 from typing import List, Tuple
-from src.bencode import decode
+from bencode import decode
 
 class TrackerClient:
     def __init__(self, torrent_meta, peer_id: bytes, port=6881):

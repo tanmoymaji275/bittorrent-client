@@ -42,6 +42,11 @@ class RequestPipeline:
         while not self.pieces.piece_complete(piece_index):
             msg_id, payload = await self.peer.read_message()
 
+            # Connection closed or error
+            if msg_id is None:
+                print("[Pipeline] Peer closed connection — breaking loop")
+                return
+
             if msg_id == MessageID.PIECE:
                 # Parse PIECE message
                 idx = int.from_bytes(payload[0:4], "big")
