@@ -2,8 +2,9 @@ import aiohttp
 import urllib.parse
 from typing import List, Tuple
 from bencode import decode
+from .utils import compact_to_peers
 
-class TrackerClient:
+class HTTPTrackerClient:
     def __init__(self, torrent_meta, peer_id: bytes, port=6881):
         self.meta = torrent_meta
         self.peer_id = peer_id  # MUST be 20 bytes
@@ -19,12 +20,7 @@ class TrackerClient:
 
     @staticmethod
     def _compact_to_peers(blob: bytes) -> List[Tuple[str, int]]:
-        peers = []
-        for i in range(0, len(blob), 6):
-            ip = ".".join(str(b) for b in blob[i:i+4])
-            port = int.from_bytes(blob[i+4:i+6], "big")
-            peers.append((ip, port))
-        return peers
+        return compact_to_peers(blob)
 
     async def announce(self) -> List[Tuple[str, int]]:
         params = {
@@ -39,23 +35,23 @@ class TrackerClient:
         }
 
         # URL-encode binary fields
-        encoded = {k: (v if not isinstance(v, bytes) else urllib.parse.quote_from_bytes(v))
-                   for k, v in params.items()}
+        encoded = {
+            k: (v if not isinstance(v, bytes)
+                else urllib.parse.quote_from_bytes(v))
+            for k, v in params.items()
+        }
 
         async with aiohttp.ClientSession() as session:
             async with session.get(self.url, params=encoded) as resp:
                 data = await resp.read()
 
-        # Tracker response is bencoded
         root = decode(data).value
 
-        # FAILURE REASON
         failure = root.get(b"failure reason")
         if failure:
             msg = failure if isinstance(failure, bytes) else failure.value
             raise RuntimeError("Tracker error: " + msg.decode())
 
-        # Parse compact peers
         peers_field = root.get(b"peers")
 
         if isinstance(peers_field, bytes) or hasattr(peers_field, "value"):
