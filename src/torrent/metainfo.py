@@ -24,6 +24,10 @@ class TorrentMeta:
 
         self.info = info_b.value  # Python dict (keys=bytes, values=BencodeType)
 
+        # ------------------ NAME ------------------
+        name_b = self.info.get(b"name")
+        self.name = name_b.value.decode() if isinstance(name_b, BencodeString) else None
+
         # ------------------ INFO HASH ------------------
         self.info_bytes = encode(self.info)  # re-encoded EXACT info dict
         self.info_hash = hashlib.sha1(self.info_bytes).digest()
@@ -128,18 +132,38 @@ class TorrentMeta:
         # ------------------ TOTAL LENGTH ------------------
         self.total_length = sum(f["length"] for f in self.files)
 
+        # Derived properties
+        self.is_multi = b"files" in self.info
+        self.is_single = not self.is_multi
+        self.num_pieces = len(self.pieces)
+        self.last_piece_length = (self.total_length % self.piece_length) or self.piece_length
+
+        # Normalize file absolute paths relative to torrent name
+        for f in self.files:
+            if self.is_multi:
+                f["abs_path"] = f"{self.name}/{f['path']}"
+            else:
+                f["abs_path"] = self.name
+
     # ----------------------------------------------------
     # Utility for debugging
     # ----------------------------------------------------
     def __repr__(self):
-        name = self.info[b"name"].value.decode()
         num_files = len(self.files)
-        num_pieces = len(self.pieces)
         announce = self.announce or "<no announce>"
 
         return (
-            f"TorrentMeta(name={name!r}, "
+            f"TorrentMeta(name={self.name!r}, "
             f"files={num_files}, "
-            f"pieces={num_pieces}, "
+            f"pieces={self.num_pieces}, "
+            f"multi={self.is_multi}, "
             f"announce={announce!r})"
         )
+
+    def all_trackers(self):
+        if self.announce_list:
+            for tier in self.announce_list:
+                for url in tier:
+                    yield url
+        if self.announce:
+            yield self.announce
