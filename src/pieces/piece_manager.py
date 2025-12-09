@@ -17,27 +17,70 @@ class PieceManager:
         # NEW: piece reservation system
         self.in_progress = {}           # piece_idx → peer
         self._lock = asyncio.Lock()
+        
+        # Callback to access list of all peers (for Rarest-First)
+        self.peers_provider = None
 
         self._compute_file_offsets()
         self._prepare_output_paths()
+
+    def set_peers_provider(self, provider_func):
+        """
+        Set a function that returns a list of current PeerConnection objects.
+        Used to calculate piece rarity.
+        """
+        self.peers_provider = provider_func
 
     # -------------------------- RESERVATION LOGIC --------------------------
 
     async def reserve_piece_for_peer(self, peer):
         """
-        Reserve the first incomplete piece that the peer has and is not reserved or completed.
-        Returns the index or None.
+        Reserve a piece for the peer using Rarest-First strategy.
+        Returns the piece index or None.
         """
         async with self._lock:
-            for idx in range(self.num_pieces):
+            # 1. Identify candidates: pieces this peer has, which we need (not done/reserved)
+            candidates = []
+            
+            # Optimization: If peer has bitfield, we can iterate efficiently
+            # For now, iterating 0..N is safe, but we check peer.has_piece(i)
+            # A better way if peer.available_pieces() is efficient:
+            possible_pieces = peer.available_pieces()
+            
+            for idx in possible_pieces:
                 if self.completed[idx]:
                     continue
                 if idx in self.in_progress:
                     continue
-                if peer.has_piece(idx):
-                    self.in_progress[idx] = peer
-                    return idx
-        return None
+                candidates.append(idx)
+
+            if not candidates:
+                return None
+
+            # 2. If we don't have access to other peers, fallback to random or first
+            if not self.peers_provider:
+                return candidates[0]
+
+            all_peers = self.peers_provider()
+            
+            # 3. Calculate rarity for each candidate
+            # Frequency map: piece_idx -> count of peers who have it
+            # We only care about the frequency of the 'candidates'
+            def get_frequency(piece_idx):
+                count = 0
+                for p in all_peers:
+                    if p.has_piece(piece_idx):
+                        count += 1
+                return count
+
+            # Sort by frequency (ascending) -> Rarest First
+            # Secondary sort: Randomize or keep stable? 
+            # For simplicity: strict rarity.
+            candidates.sort(key=get_frequency)
+
+            best_piece = candidates[0]
+            self.in_progress[best_piece] = peer
+            return best_piece
 
     async def release_piece(self, idx, peer):
         """Release reservation if this peer was the owner."""

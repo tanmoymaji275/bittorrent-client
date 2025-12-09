@@ -12,6 +12,9 @@ class SessionManager:
 
         # Shared piece manager for all peers
         self.piece_manager = PieceManager(self.meta, download_dir=self.download_dir)
+        
+        # Link piece manager to peers list for Rarest-First strategy
+        self.piece_manager.set_peers_provider(lambda: self.peers)
 
         self.peers = []       # list of PeerConnection objects
         self.pipelines = []   # list of running RequestPipeline tasks
