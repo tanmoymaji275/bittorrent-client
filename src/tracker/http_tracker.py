@@ -1,5 +1,5 @@
 import aiohttp
-import urllib.parse
+# import urllib.parse
 from typing import List, Tuple
 from bencode import decode
 from .utils import compact_to_peers
@@ -35,14 +35,26 @@ class HTTPTrackerClient:
         }
 
         # URL-encode binary fields
-        encoded = {
-            k: (v if not isinstance(v, bytes)
-                else urllib.parse.quote_from_bytes(v))
-            for k, v in params.items()
-        }
+        def pct_encode(b: bytes) -> str:
+            # Correct percent-encoding for trackers: %HH per byte
+            return ''.join(f'%{byte:02X}' for byte in b)
+
+        encoded = {}
+        for k, v in params.items():
+            if isinstance(v, bytes):
+                encoded[k] = pct_encode(v)
+            else:
+                encoded[k] = str(v)
+
+        print("Sending info_hash:", encoded["info_hash"])
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(self.url, params=encoded) as resp:
+            query = "&".join(f"{k}={v}" for k, v in encoded.items())
+            full_url = f"{self.url}?{query}"
+
+            print("Final announce URL:", full_url)
+
+            async with session.get(full_url) as resp:
                 data = await resp.read()
 
         root = decode(data).value

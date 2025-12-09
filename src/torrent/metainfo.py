@@ -1,169 +1,135 @@
 import hashlib
 from pathlib import Path
 from bencode import *
+import re
+
+
+def extract_info_bytes(raw: bytes) -> bytes:
+    """
+    Extract the exact bencoded 'info' dictionary byte slice.
+    This guarantees correct SHA-1 infohash as required by BitTorrent spec.
+    """
+    key = b"4:info"
+    start = raw.index(key) + len(key)
+
+    i = start
+
+    def parse(idx):
+        b = raw[idx:idx+1]
+
+        # Integer: i123e
+        if b == b"i":
+            _end = raw.index(b"e", idx)
+            return _end + 1
+
+        # List: l ... e
+        if b == b"l":
+            idx += 1
+            while raw[idx:idx+1] != b"e":
+                idx = parse(idx)
+            return idx + 1
+
+        # Dict: d ... e
+        if b == b"d":
+            idx += 1
+            while raw[idx:idx+1] != b"e":
+                idx = parse(idx)  # key
+                idx = parse(idx)  # value
+            return idx + 1
+
+        # String: len:value
+        m = re.match(rb"(\d+):", raw[idx:])
+        strlen = int(m.group(1))
+        offset = idx + len(m.group(0))
+        return offset + strlen
+
+    end = parse(i)
+    return raw[start:end]
 
 
 class TorrentMeta:
     def __init__(self, path: Path):
         self.path = Path(path)
 
-        # Decode .torrent file
-        root = decode(self.path.read_bytes())
+        # Load raw bytes
+        raw = self.path.read_bytes()
+
+        # ----------- NEW FIX: extract raw info bytes -----------
+        self.info_bytes = extract_info_bytes(raw)
+        self.info_hash = hashlib.sha1(self.info_bytes).digest()
+
+        # Decode full torrent structure normally
+        root = decode(raw)
         if not isinstance(root, BencodeDict):
             raise ValueError("Invalid torrent: root must be a dictionary")
 
-        self.data = root.value  # Python dict: keys=bytes, values=BencodeType
+        self.data = root.value
 
         # ------------------ INFO ------------------
         if b"info" not in self.data:
             raise ValueError("Torrent missing 'info' dictionary")
 
         info_b = self.data[b"info"]
-        if not isinstance(info_b, BencodeDict):
-            raise ValueError("'info' must be a dictionary")
-
-        self.info = info_b.value  # Python dict (keys=bytes, values=BencodeType)
+        self.info = info_b.value
 
         # ------------------ NAME ------------------
         name_b = self.info.get(b"name")
         self.name = name_b.value.decode() if isinstance(name_b, BencodeString) else None
 
-        # ------------------ INFO HASH ------------------
-        self.info_bytes = encode(self.info)  # re-encoded EXACT info dict
-        self.info_hash = hashlib.sha1(self.info_bytes).digest()
-
         # ------------------ ANNOUNCE URL ------------------
-        self.announce = None
         ann_b = self.data.get(b"announce")
-        if isinstance(ann_b, BencodeString):
-            self.announce = ann_b.value.decode()
+        self.announce = ann_b.value.decode() if isinstance(ann_b, BencodeString) else None
 
         # ------------------ ANNOUNCE-LIST ------------------
         self.announce_list = None
         ann_list_b = self.data.get(b"announce-list")
 
         if isinstance(ann_list_b, BencodeList):
-            announce_list = []
+            tiers = []
             for tier in ann_list_b.value:
-                if isinstance(tier, BencodeList):
-                    urls = []
-                    for u in tier.value:
-                        if isinstance(u, BencodeString):
-                            urls.append(u.value.decode())
-                    if urls:
-                        announce_list.append(urls)
-
-            if announce_list:
-                self.announce_list = announce_list
+                urls = []
+                for u in tier.value:
+                    if isinstance(u, BencodeString):
+                        urls.append(u.value.decode())
+                if urls:
+                    tiers.append(urls)
+            if tiers:
+                self.announce_list = tiers
 
         # ------------------ PIECE LENGTH ------------------
         piece_len_b = self.info.get(b"piece length")
-        if not isinstance(piece_len_b, BencodeInt):
-            raise ValueError("Missing or invalid 'piece length' in 'info'")
         self.piece_length = piece_len_b.value
 
         # ------------------ PIECES ------------------
         pieces_b = self.info.get(b"pieces")
-        if not isinstance(pieces_b, BencodeString):
-            raise ValueError("Missing or invalid 'pieces' in 'info'")
-
         raw_pieces = pieces_b.value
-        if len(raw_pieces) % 20 != 0:
-            raise ValueError("'pieces' must be a multiple of 20 bytes")
-
-        self.pieces = [
-            raw_pieces[i:i + 20] for i in range(0, len(raw_pieces), 20)
-        ]
+        self.pieces = [raw_pieces[i:i+20] for i in range(0, len(raw_pieces), 20)]
 
         # ------------------ FILES ------------------
         if b"files" in self.info:
-            # ========== MULTI-FILE TORRENT ==========
-            files_b = self.info[b"files"]
-
-            if not isinstance(files_b, BencodeList):
-                raise ValueError("'files' must be a list")
-
             self.files = []
-            for f_entry in files_b.value:
-                if not isinstance(f_entry, BencodeDict):
-                    raise ValueError("Each entry in 'files' must be a dict")
-
+            for f_entry in self.info[b"files"].value:
                 entry = f_entry.value
-                length_b = entry.get(b"length")
-                path_b = entry.get(b"path")
-
-                if not isinstance(length_b, BencodeInt):
-                    raise ValueError("File entry missing 'length'")
-
-                if not isinstance(path_b, BencodeList):
-                    raise ValueError("'path' in file entry must be a list")
-
-                # Path components MUST be BencodeString
-                parts = []
-                for p in path_b.value:
-                    if not isinstance(p, BencodeString):
-                        raise ValueError("Path components must be strings")
-                    parts.append(p.value.decode())
-
-                # TORRENT-SPEC PATH (always forward-slash)
-                torrent_path = "/".join(parts)
-
-                self.files.append({
-                    "length": length_b.value,
-                    "path": torrent_path
-                })
-
+                length_b = entry[b"length"]
+                parts = [p.value.decode() for p in entry[b"path"].value]
+                path = "/".join(parts)
+                self.files.append({"length": length_b.value, "path": path})
         else:
-            # ========== SINGLE-FILE TORRENT ==========
-            name_b = self.info.get(b"name")
-            length_b = self.info.get(b"length")
+            name_b = self.info[b"name"]
+            length_b = self.info[b"length"]
+            self.files = [{"length": length_b.value, "path": name_b.value.decode()}]
 
-            if not isinstance(name_b, BencodeString):
-                raise ValueError("Missing name for single-file torrent")
-
-            if not isinstance(length_b, BencodeInt):
-                raise ValueError("Missing length for single-file torrent")
-
-            self.files = [{
-                "length": length_b.value,
-                "path": name_b.value.decode()
-            }]
-
-        # ------------------ TOTAL LENGTH ------------------
         self.total_length = sum(f["length"] for f in self.files)
-
-        # Derived properties
         self.is_multi = b"files" in self.info
         self.is_single = not self.is_multi
         self.num_pieces = len(self.pieces)
         self.last_piece_length = (self.total_length % self.piece_length) or self.piece_length
 
-        # Normalize file absolute paths relative to torrent name
         for f in self.files:
-            if self.is_multi:
-                f["abs_path"] = f"{self.name}/{f['path']}"
-            else:
-                f["abs_path"] = self.name
+            f["abs_path"] = f"{self.name}/{f['path']}" if self.is_multi else self.name
 
-    # ----------------------------------------------------
-    # Utility for debugging
-    # ----------------------------------------------------
     def __repr__(self):
-        num_files = len(self.files)
-        announce = self.announce or "<no announce>"
-
         return (
-            f"TorrentMeta(name={self.name!r}, "
-            f"files={num_files}, "
-            f"pieces={self.num_pieces}, "
-            f"multi={self.is_multi}, "
-            f"announce={announce!r})"
+            f"TorrentMeta(name={self.name!r}, files={len(self.files)}, pieces={self.num_pieces}, "
+            f"multi={self.is_multi}, announce={self.announce!r})"
         )
-
-    def all_trackers(self):
-        if self.announce_list:
-            for tier in self.announce_list:
-                for url in tier:
-                    yield url
-        if self.announce:
-            yield self.announce
