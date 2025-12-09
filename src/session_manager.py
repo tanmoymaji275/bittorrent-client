@@ -1,6 +1,7 @@
 import asyncio
 from peer.peer_connection import PeerConnection
 from peer.request_pipeline import RequestPipeline
+from peer.choke_manager import ChokeManager
 from pieces.piece_manager import PieceManager
 
 class SessionManager:
@@ -18,6 +19,7 @@ class SessionManager:
 
         self.peers = []       # list of PeerConnection objects
         self.pipelines = []   # list of running RequestPipeline tasks
+        self.choke_manager = ChokeManager()
 
     async def add_peer(self, ip, port):
         """
@@ -43,6 +45,11 @@ class SessionManager:
             asyncio.create_task(RequestPipeline(peer, self.piece_manager).start())
             for peer in self.peers
         ]
+        
+        # Start Choke Manager Loop
+        self.tasks.append(
+            asyncio.create_task(self.choke_manager.run_loop(lambda: self.peers))
+        )
 
         # Monitor until download complete
         await self.monitor_until_done()

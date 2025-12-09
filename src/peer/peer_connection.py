@@ -18,12 +18,21 @@ class PeerConnection:
         self.bitfield = None
         # Set of piece indices learned via HAVE messages
         self.have = set()
+        
+        # For Tit-for-Tat: bytes downloaded since last choke round
+        self.downloaded_sample = 0
+        
+        # For Choking state
+        self.am_choking = True      # We are choking this peer
+        self.am_interested = False  # We are interested in this peer
+        self.peer_choking = True    # This peer is choking us
+        self.peer_interested = False # This peer is interested in us
 
     async def connect(self):
         try:
             self.reader, self.writer = await asyncio.open_connection(self.ip, self.port)
         except Exception as e:
-            raise ConnectionError(f"Could not connect to peer {self.ip}:{self.port} → {e}")
+            raise ConnectionError(f"Could not connect to peer {self.ip}:{self.port} -> {e}")
 
         # ---- SEND HANDSHAKE ----
         handshake = build_handshake(self.meta.info_hash, self.peer_id)
@@ -45,6 +54,12 @@ class PeerConnection:
 
         # after handshake, peers often send BITFIELD; leave reading to read_message()
         return remote_pid
+    
+    def reset_download_stats(self):
+        """Returns bytes downloaded since last call, and resets counter."""
+        val = self.downloaded_sample
+        self.downloaded_sample = 0
+        return val
 
     async def send(self, msg_id, payload=b""):
         if self.closed:
@@ -54,6 +69,17 @@ class PeerConnection:
             msg = build_message(msg_id, payload)
             self.writer.write(msg)
             await self.writer.drain()
+            
+            # Update our state tracking
+            if msg_id == MessageID.CHOKE:
+                self.am_choking = True
+            elif msg_id == MessageID.UNCHOKE:
+                self.am_choking = False
+            elif msg_id == MessageID.INTERESTED:
+                self.am_interested = True
+            elif msg_id == MessageID.NOT_INTERESTED:
+                self.am_interested = False
+                
         except Exception:
             self.closed = True
             raise
@@ -80,9 +106,25 @@ class PeerConnection:
         try:
             msg_id = (await self.reader.readexactly(1))[0]
             payload = await self.reader.readexactly(length - 1)
+            
+            # Count bandwidth
+            self.downloaded_sample += (length - 1)
+            
         except asyncio.IncompleteReadError:
             self.closed = True
             return None, None
+
+        # ------------------------------
+        # Handle State Updates
+        # ------------------------------
+        if msg_id == int(MessageID.CHOKE):
+            self.peer_choking = True
+        elif msg_id == int(MessageID.UNCHOKE):
+            self.peer_choking = False
+        elif msg_id == int(MessageID.INTERESTED):
+            self.peer_interested = True
+        elif msg_id == int(MessageID.NOT_INTERESTED):
+            self.peer_interested = False
 
         # ------------------------------
         # Handle BITFIELD and HAVE

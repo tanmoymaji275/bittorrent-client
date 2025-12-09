@@ -175,6 +175,57 @@ class PieceManager:
             remaining -= bytes_to_write
             if remaining <= 0:
                 break
+                
+    def read_block(self, piece_idx, offset, length):
+        """Read a block of data from disk for uploading."""
+        if not self.completed[piece_idx]:
+            return None
+            
+        piece_start = piece_idx * self.meta.piece_length + offset
+        remaining = length
+        data = bytearray()
+        
+        for f in self.meta.files:
+            f_start = f["offset"]
+            f_end   = f_start + f["length"]
+
+            # Check if this file overlaps with the requested range
+            if piece_start >= f_end or piece_start + remaining <= f_start:
+                continue
+            
+            # Calculate read bounds relative to this file
+            # Intersection of [piece_start, piece_start + remaining] and [f_start, f_end]
+            read_abs_start = max(piece_start, f_start)
+            read_abs_end = min(piece_start + remaining, f_end)
+            
+            read_count = read_abs_end - read_abs_start
+            read_file_offset = read_abs_start - f_start
+            
+            out_path = self.download_dir / f["path"]
+            
+            try:
+                with open(out_path, "rb") as fp:
+                    fp.seek(read_file_offset)
+                    chunk = fp.read(read_count)
+                    if len(chunk) != read_count:
+                        # File shorter than expected?
+                        return None
+                    data.extend(chunk)
+            except OSError:
+                return None
+                
+            remaining -= read_count
+            # piece_start moves forward conceptually, but we used absolute calc
+            # simpler: update piece_start to end of this read
+            piece_start += read_count 
+            
+            if remaining <= 0:
+                break
+                
+        if len(data) != length:
+            return None
+            
+        return bytes(data)
 
     def all_pieces_done(self):
         return all(self.completed)

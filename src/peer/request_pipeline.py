@@ -18,6 +18,8 @@ class RequestPipeline:
             msg_id, payload = await self.peer.read_message()
             if msg_id == MessageID.UNCHOKE:
                 break
+            if msg_id == MessageID.REQUEST:
+                await self._handle_request(payload)
 
         # Main loop — get new pieces until peer is no longer useful
         while True:
@@ -39,6 +41,29 @@ class RequestPipeline:
             if not ok:
                 await self.pieces.release_piece(piece_index, self.peer)
                 return
+
+    async def _handle_request(self, payload):
+        """Handle an incoming REQUEST message from the peer (Upload)."""
+        if self.peer.am_choking:
+            # We are choking them, so we ignore the request (Tit-for-Tat)
+            return
+
+        if len(payload) < 12:
+            return
+
+        index = int.from_bytes(payload[0:4], "big")
+        begin = int.from_bytes(payload[4:8], "big")
+        length = int.from_bytes(payload[8:12], "big")
+
+        # Sanity check on length
+        if length > 32 * 1024: 
+            return
+
+        block = self.pieces.read_block(index, begin, length)
+        if block:
+            # Send PIECE message: index(4) + begin(4) + block
+            resp_payload = payload[0:8] + block
+            await self.peer.send(MessageID.PIECE, resp_payload)
 
     # noinspection DuplicatedCode
     async def download_piece(self, idx):
@@ -73,6 +98,10 @@ class RequestPipeline:
             if msg_id is None:
                 print("[Pipeline] Peer closed connection.")
                 return False
+                
+            if msg_id == MessageID.REQUEST:
+                await self._handle_request(payload)
+                continue
 
             if msg_id == MessageID.PIECE:
                 got_idx = int.from_bytes(payload[0:4], "big")
