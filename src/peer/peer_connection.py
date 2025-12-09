@@ -20,193 +20,96 @@ class PeerConnection:
         # Set of piece indices learned via HAVE messages
         self.have = set()
         
-                # For Tit-for-Tat: bytes downloaded since last choke round
+        # Download/Upload statistics for rate calculation
+        self.downloaded_sample = 0
+        self.uploaded_sample = 0
+        self.last_reset_time = time.time()
         
-                self.downloaded_sample = 0
+        # Choking state from our perspective and peer's perspective
+        self.am_choking = True      # We are choking this peer
+        self.am_interested = False  # We are interested in this peer
+        self.peer_choking = True    # This peer is choking us
+        self.peer_interested = False # This peer is interested in us
+
+    async def connect(self):
+        try:
+            self.reader, self.writer = await asyncio.open_connection(self.ip, self.port)
+        except Exception as e:
+            raise ConnectionError(f"Could not connect to peer {self.ip}:{self.port} -> {e}")
+
+        # ---- SEND HANDSHAKE ----
+        handshake = build_handshake(self.meta.info_hash, self.peer_id)
+        self.writer.write(handshake)
+        await self.writer.drain()
+
+        # ---- READ HANDSHAKE ----
+        try:
+            # use HANDSHAKE_LEN from peer_protocol for clarity
+            resp = await self.reader.readexactly(HANDSHAKE_LEN)
+        except asyncio.IncompleteReadError:
+            raise ConnectionError("Peer closed connection during handshake")
+
+        info_hash, remote_pid = parse_handshake(resp)
+        self.remote_peer_id = remote_pid
+
+        if info_hash != self.meta.info_hash:
+            raise ValueError("Peer sent a handshake with wrong info_hash")
+
+        # after handshake, peers often send BITFIELD; leave reading to read_message()
+        return remote_pid
+    
+    def reset_stats(self):
+        """
+        Returns (bytes_downloaded, bytes_uploaded, duration_seconds) since last call.
+        Resets counters and timer.
+        """
+        now = time.time()
+        duration = now - self.last_reset_time
         
-                self.uploaded_sample = 0 # Track upload for dynamic slots
+        d_val = self.downloaded_sample
+        u_val = self.uploaded_sample
         
-                self.last_reset_time = time.time()
+        self.downloaded_sample = 0
+        self.uploaded_sample = 0
+        self.last_reset_time = now
         
-                self.smoothed_download_rate = 0.0 # Bytes/second
-        
-                self.choke_interval_start_time = time.time()
-        
-                
-        
-                # For Choking state
-        
-                self.am_choking = True      # We are choking this peer
-        
-                self.am_interested = False  # We are interested in this peer
-        
-                self.peer_choking = True    # This peer is choking us
-        
-                self.peer_interested = False # This peer is interested in us
-        
-        
-        
-            async def connect(self):
-        
-                try:
-        
-                    self.reader, self.writer = await asyncio.open_connection(self.ip, self.port)
-        
-                except Exception as e:
-        
-                    raise ConnectionError(f"Could not connect to peer {self.ip}:{self.port} -> {e}")
-        
-        
-        
-                # ---- SEND HANDSHAKE ----
-        
-                handshake = build_handshake(self.meta.info_hash, self.peer_id)
-        
-                self.writer.write(handshake)
-        
-                await self.writer.drain()
-        
-        
-        
-                # ---- READ HANDSHAKE ----
-        
-                try:
-        
-                    # use HANDSHAKE_LEN from peer_protocol for clarity
-        
-                    resp = await self.reader.readexactly(HANDSHAKE_LEN)
-        
-                except asyncio.IncompleteReadError:
-        
-                    raise ConnectionError("Peer closed connection during handshake")
-        
-        
-        
-                info_hash, remote_pid = parse_handshake(resp)
-        
-                self.remote_peer_id = remote_pid
-        
-        
-        
-                if info_hash != self.meta.info_hash:
-        
-                    raise ValueError("Peer sent a handshake with wrong info_hash")
-        
-        
-        
-                # after handshake, peers often send BITFIELD; leave reading to read_message()
-        
-                return remote_pid
-        
+        return d_val, u_val, duration
+
+    def reset_download_stats(self):
+        # Alias for backward compatibility if needed, or remove. 
+        d, u, t = self.reset_stats()
+        return d, t
+
+    async def send(self, msg_id, payload=b""):
+        if self.closed:
+            return
+
+        try:
+            msg = build_message(msg_id, payload)
+            self.writer.write(msg)
+            await self.writer.drain()
             
-        
-            def reset_stats(self):
-        
-                """
-        
-                Returns (bytes_downloaded, bytes_uploaded, duration_seconds) since last call.
-        
-                Resets counters and timer.
-        
-                """
-        
-                now = time.time()
-        
-                duration = now - self.last_reset_time
-        
+            # Track upload
+            if msg_id == MessageID.PIECE:
+                # Payload is index(4) + begin(4) + block
+                # Actual data size is len(payload) - 8
+                # But strictly speaking, we uploaded the whole payload overhead too.
+                # TCP/IP overhead is ignored, but application bytes count.
+                self.uploaded_sample += len(payload)
+            
+            # Update our state tracking
+            if msg_id == MessageID.CHOKE:
+                self.am_choking = True
+            elif msg_id == MessageID.UNCHOKE:
+                self.am_choking = False
+            elif msg_id == MessageID.INTERESTED:
+                self.am_interested = True
+            elif msg_id == MessageID.NOT_INTERESTED:
+                self.am_interested = False
                 
-        
-                d_val = self.downloaded_sample
-        
-                u_val = self.uploaded_sample
-        
-                
-        
-                self.downloaded_sample = 0
-        
-                self.uploaded_sample = 0
-        
-                self.last_reset_time = now
-        
-                
-        
-                return d_val, u_val, duration
-        
-        
-        
-            def reset_download_stats(self):
-        
-                # Alias for backward compatibility if needed, or remove. 
-        
-                # I'll keep it as a wrapper for now to avoid breaking ChokeManager immediately
-        
-                # before I update it.
-        
-                d, u, t = self.reset_stats()
-        
-                return d, t
-        
-        
-        
-            async def send(self, msg_id, payload=b""):
-        
-                if self.closed:
-        
-                    return
-        
-        
-        
-                try:
-        
-                    msg = build_message(msg_id, payload)
-        
-                    self.writer.write(msg)
-        
-                    await self.writer.drain()
-        
-                    
-        
-                    # Track upload
-        
-                    if msg_id == MessageID.PIECE:
-        
-                        # Payload is index(4) + begin(4) + block
-        
-                        # Actual data size is len(payload) - 8
-        
-                        # But strictly speaking, we uploaded the whole payload overhead too.
-        
-                        # TCP/IP overhead is ignored, but application bytes count.
-        
-                        self.uploaded_sample += len(payload)
-        
-                    
-        
-                    # Update our state tracking
-        
-                    if msg_id == MessageID.CHOKE:
-        
-                        self.am_choking = True
-        
-                    elif msg_id == MessageID.UNCHOKE:
-        
-                        self.am_choking = False
-        
-                    elif msg_id == MessageID.INTERESTED:
-        
-                        self.am_interested = True
-        
-                    elif msg_id == MessageID.NOT_INTERESTED:
-        
-                        self.am_interested = False
-        
-                        
-        
-                except Exception:
-        
-                    self.closed = True
-        
-                    raise
+        except Exception:
+            self.closed = True
+            raise
 
     async def read_message(self):
         """Reads and parses the next framed peer message.

@@ -11,10 +11,9 @@ class SessionManager:
         self.peer_id = peer_id
         self.download_dir = download_dir
 
-        # Shared piece manager for all peers
+        # Shared piece manager for all peers.
+        # It's linked to the peers list for the Rarest-First strategy.
         self.piece_manager = PieceManager(self.meta, download_dir=self.download_dir)
-        
-        # Link piece manager to peers list for Rarest-First strategy
         self.piece_manager.set_peers_provider(lambda: self.peers)
 
         self.peers = []       # list of PeerConnection objects

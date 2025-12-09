@@ -42,9 +42,7 @@ class PieceManager:
             # 1. Identify candidates: pieces this peer has, which we need (not done/reserved)
             candidates = []
             
-            # Optimization: If peer has bitfield, we can iterate efficiently
-            # For now, iterating 0..N is safe, but we check peer.has_piece(i)
-            # A better way if peer.available_pieces() is efficient:
+            # Using peer.available_pieces() ensures we only consider pieces the peer claims to have.
             possible_pieces = peer.available_pieces()
             
             for idx in possible_pieces:
@@ -57,15 +55,15 @@ class PieceManager:
             if not candidates:
                 return None
 
-            # 2. If we don't have access to other peers, fallback to random or first
+            # 2. If no peers_provider, fallback to picking the first available piece.
             if not self.peers_provider:
                 return candidates[0]
 
             all_peers = self.peers_provider()
             
-            # 3. Calculate rarity for each candidate
-            # Frequency map: piece_idx -> count of peers who have it
-            # We only care about the frequency of the 'candidates'
+            # 3. Calculate rarity for each candidate.
+            # The goal is to prioritize pieces that fewer peers in the swarm possess,
+            # ensuring critical pieces are acquired before they become unavailable.
             def get_frequency(piece_idx):
                 count = 0
                 for p in all_peers:
@@ -73,9 +71,7 @@ class PieceManager:
                         count += 1
                 return count
 
-            # Sort by frequency (ascending) -> Rarest First
-            # Secondary sort: Randomize or keep stable? 
-            # For simplicity: strict rarity.
+            # Sort by frequency (ascending) to get the rarest pieces first.
             candidates.sort(key=get_frequency)
 
             best_piece = candidates[0]
