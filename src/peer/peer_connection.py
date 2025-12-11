@@ -32,9 +32,23 @@ class PeerConnection:
         self.peer_interested = False # This peer is interested in us
 
     async def connect(self):
+        # Apply a bounded timeout for TCP connect to avoid long stalls on Windows (e.g., WinError 121)
+        CONNECT_TIMEOUT_SECONDS = 5
         try:
-            self.reader, self.writer = await asyncio.open_connection(self.ip, self.port)
-        except Exception as e:
+            self.reader, self.writer = await asyncio.wait_for(
+                asyncio.open_connection(self.ip, self.port),
+                timeout=CONNECT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            raise ConnectionError(
+                f"Could not connect to peer {self.ip}:{self.port} -> connection timed out"
+            )
+        except OSError as e:
+            # Map common Windows network errors to a cleaner message
+            if getattr(e, "winerror", None) == 121:
+                raise ConnectionError(
+                    f"Could not connect to peer {self.ip}:{self.port} -> [WinError 121] The semaphore timeout period expired"
+                )
             raise ConnectionError(f"Could not connect to peer {self.ip}:{self.port} -> {e}")
 
         # ---- SEND HANDSHAKE ----
@@ -44,8 +58,14 @@ class PeerConnection:
 
         # ---- READ HANDSHAKE ----
         try:
-            # use HANDSHAKE_LEN from peer_protocol for clarity
-            resp = await self.reader.readexactly(HANDSHAKE_LEN)
+            # use HANDSHAKE_LEN from peer_protocol for clarity, with a bounded read timeout
+            HANDSHAKE_TIMEOUT_SECONDS = 5
+            resp = await asyncio.wait_for(
+                self.reader.readexactly(HANDSHAKE_LEN),
+                timeout=HANDSHAKE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            raise ConnectionError("Timed out waiting for handshake from peer")
         except asyncio.IncompleteReadError:
             raise ConnectionError("Peer closed connection during handshake")
 

@@ -1,5 +1,10 @@
 import asyncio
 from pathlib import Path
+import sys
+import os
+
+# Add src to sys.path so submodules can import 'bencode' as a top-level package
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.torrent.metainfo import TorrentMeta
 from src.tracker.tracker_client import TrackerClient
@@ -7,7 +12,7 @@ from src.session_manager import SessionManager
 
 
 async def main():
-    torrent_path = Path("torrents/sample.torrent")
+    torrent_path = Path("torrents/a.torrent")
     meta = TorrentMeta(torrent_path)
     print("announce:", meta.announce)
     print("announce_list:", meta.announce_list)

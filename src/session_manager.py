@@ -50,18 +50,23 @@ class SessionManager:
             asyncio.create_task(self.choke_manager.run_loop(lambda: self.peers))
         )
 
-        # Monitor until download complete
-        await self.monitor_until_done()
+        try:
+            # Monitor until download complete
+            await self.monitor_until_done()
 
-        print("[Session] Torrent download complete!")
+            print("[Session] Torrent download complete!")
+        except asyncio.CancelledError:
+            # Graceful shutdown on cancellation (Ctrl+C or outer task cancel)
+            print("[Session] Cancelled. Shutting down gracefully...")
+        finally:
+            # Cancel all remaining tasks
+            if self.tasks:
+                for t in self.tasks:
+                    t.cancel()
 
-        # Cancel all remaining tasks
-        for t in self.tasks:
-            t.cancel()
-
-        # Close peers
-        for peer in self.peers:
-            peer.close()
+            # Close peers
+            for peer in self.peers:
+                peer.close()
 
     async def monitor_until_done(self):
         """

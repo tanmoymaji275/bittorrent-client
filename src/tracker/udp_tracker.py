@@ -2,46 +2,117 @@ import socket
 import struct
 import random
 import urllib.parse
-from typing import List, Tuple
+import asyncio
+from typing import List, Tuple, Optional
 from .utils import compact_to_peers
 
 
+class UDPTrackerProtocol(asyncio.DatagramProtocol):
+    """
+    A DatagramProtocol to handle UDP communication with a tracker.
+    """
+    def __init__(self, on_response_received: callable, on_timeout: callable):
+        self.on_response_received = on_response_received
+        self.on_timeout = on_timeout
+        self.transport = None
+        self.response_future = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+        # We don't create the future here because we might reuse the protocol?
+        # Actually for this simple client we create a new future for each request.
+        pass
+
+    def datagram_received(self, data, addr):
+        if self.response_future and not self.response_future.done():
+            self.response_future.set_result(data)
+        # Call the registered callback
+        self.on_response_received(data, addr)
+
+    def error_received(self, exc):
+        if self.response_future and not self.response_future.done():
+            self.response_future.set_exception(exc)
+        if self.transport:
+            self.transport.close()
+
+    def connection_lost(self, exc):
+        if exc and self.response_future and not self.response_future.done():
+            self.response_future.set_exception(exc)
+        if self.transport:
+            self.transport.close()
+
+    async def send_and_receive(self, data: bytes, addr: Tuple[str, int], timeout: float) -> bytes:
+        self.response_future = asyncio.get_running_loop().create_future()
+        if self.transport:
+            self.transport.sendto(data, addr)
+            try:
+                return await asyncio.wait_for(self.response_future, timeout=timeout)
+            except asyncio.TimeoutError:
+                self.on_timeout()
+                raise
+        else:
+             raise RuntimeError("Transport not connected")
+
+
 class UDPTrackerClient:
-    def __init__(self, torrent_meta, peer_id: bytes, port=6881, timeout=5.0):
+    def __init__(self, torrent_meta, peer_id: bytes, port=6881, timeout=5.0, url: str = None):
         self.meta = torrent_meta
         self.peer_id = peer_id  # MUST be 20 bytes
         self.port = port
         self.timeout = timeout
-
-        if torrent_meta.announce:
-            self.url = torrent_meta.announce
-        elif torrent_meta.announce_list:
-            self.url = torrent_meta.announce_list[0][0]
-        else:
-            raise ValueError("No announce URL found in torrent")
+        self.protocol: Optional[UDPTrackerProtocol] = None
+        self.transport: Optional[asyncio.DatagramTransport] = None
+        
+        self.url = url if url else torrent_meta.announce
+        if not self.url:
+            if torrent_meta.announce_list:
+                 self.url = torrent_meta.announce_list[0][0]
+            else:
+                 raise ValueError("No announce URL provided for UDPTrackerClient")
 
         parsed = urllib.parse.urlparse(self.url)
         self.host = parsed.hostname
         self.tracker_port = parsed.port or 80
-
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.settimeout(self.timeout)
+        
+        # Resolve IP to avoid WinError 10022 on Windows with asyncio UDP
+        try:
+            self.host_ip = socket.gethostbyname(self.host)
+        except socket.error as e:
+            print(f"[Tracker] Could not resolve {self.host}: {e}")
+            self.host_ip = self.host 
 
     @staticmethod
     def _compact_to_peers(blob: bytes) -> List[Tuple[str, int]]:
         return compact_to_peers(blob)
 
-    def _send(self, data: bytes) -> bytes:
-        self.sock.sendto(data, (self.host, self.tracker_port))
-        return self.sock.recvfrom(4096)[0]
+    async def _create_endpoint(self):
+        loop = asyncio.get_running_loop()
+        # Use non-connected socket (no remote_addr) to avoid issues with multi-homed trackers
+        self.transport, self.protocol = await loop.create_datagram_endpoint(
+            lambda: UDPTrackerProtocol(self._on_response, self._on_timeout),
+            local_addr=('0.0.0.0', 0)
+        )
+
+    def _on_response(self, data: bytes, addr: Tuple[str, int]):
+        pass
+
+    def _on_timeout(self):
+        print(f"[Tracker] UDP tracker request timed out")
 
     async def announce(self) -> List[Tuple[str, int]]:
+        if not self.transport:
+            await self._create_endpoint()
+
         protocol_id = 0x41727101980
         action = 0
         transaction_id = random.randint(0, 2**31 - 1)
 
         req = struct.pack(">QII", protocol_id, action, transaction_id)
-        resp = self._send(req)
+        
+        try:
+            resp = await self.protocol.send_and_receive(req, (self.host_ip, self.tracker_port), self.timeout)
+        except asyncio.TimeoutError:
+            raise RuntimeError("UDP tracker connect timed out")
 
         if len(resp) < 16:
             raise RuntimeError("Invalid UDP tracker connect response")
@@ -75,7 +146,10 @@ class UDPTrackerClient:
             self.port,
         )
 
-        resp = self._send(req)
+        try:
+            resp = await self.protocol.send_and_receive(req, (self.host_ip, self.tracker_port), self.timeout)
+        except asyncio.TimeoutError:
+            raise RuntimeError("UDP tracker announce timed out")
 
         if len(resp) < 20:
             raise RuntimeError("Invalid UDP tracker announce response")

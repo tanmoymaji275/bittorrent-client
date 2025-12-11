@@ -1,6 +1,4 @@
-import urllib.parse
-# from typing import List, Tuple
-
+from typing import List, Tuple
 from .http_tracker import HTTPTrackerClient
 from .udp_tracker import UDPTrackerClient
 
@@ -8,53 +6,45 @@ from .udp_tracker import UDPTrackerClient
 class TrackerClient:
     def __init__(self, torrent_meta, peer_id: bytes, port=6881):
         self.meta = torrent_meta
-        self.peer_id = peer_id  # MUST be 20 bytes
+        self.peer_id = peer_id
         self.port = port
 
-        # Pick the best tracker URL
-        if torrent_meta.announce:
-            self.url = torrent_meta.announce
-        elif torrent_meta.announce_list:
-            self.url = torrent_meta.announce_list[0][0]
-        else:
-            raise ValueError("No announce URL found in torrent")
-
-    def _scheme(self):
-        return urllib.parse.urlparse(self.url).scheme.lower()
-
-    async def announce(self):
-        scheme = self._scheme()
-
-        # Try HTTP(S) first if available
+        self.trackers = []
+        # Add primary announce URL
+        if self.meta.announce:
+            self._add_tracker_client(self.meta.announce)
+        
+        # Add trackers from announce-list
         if self.meta.announce_list:
             for tier in self.meta.announce_list:
                 for url in tier:
-                    parsed = urllib.parse.urlparse(url)
-                    if parsed.scheme in ("http", "https"):
-                        try:
-                            client = HTTPTrackerClient(self.meta, self.peer_id, self.port)
-                            client.url = url
-                            return await client.announce()
-                        except Exception as e:
-                            print(f"[Tracker] HTTP tracker failed {url} → {e}")
+                    self._add_tracker_client(url)
 
-        # If main announce is HTTP, use that
-        if scheme in ("http", "https"):
-            client = HTTPTrackerClient(self.meta, self.peer_id, self.port)
+        if not self.trackers:
+            raise ValueError("No announce URLs found in torrent")
+
+    def _add_tracker_client(self, url: str):
+        if url.startswith("http"):
+            self.trackers.append(HTTPTrackerClient(self.meta, self.peer_id, self.port, url=url))
+        elif url.startswith("udp"):
+            self.trackers.append(UDPTrackerClient(self.meta, self.peer_id, self.port, url=url))
+        # Add other protocols like ws:// for WebTorrent if needed
+
+    async def announce(self) -> List[Tuple[str, int]]:
+        all_peers = set()
+        for tracker_client in self.trackers:
             try:
-                return await client.announce()
+                peers = await tracker_client.announce()
+                print(f"[Tracker] {type(tracker_client).__name__} {tracker_client.url} returned {len(peers)} peers.")
+                for peer in peers:
+                    all_peers.add(peer)
             except Exception as e:
-                print(f"[Tracker] HTTP announce failed → {e}")
-
-        # LAST RESORT: UDP
-        if scheme == "udp":
-            client = UDPTrackerClient(self.meta, self.peer_id, self.port)
-            try:
-                return await client.announce()
-            except Exception as e:
-                print(f"[Tracker] UDP tracker timed out → {e}")
-
-        raise RuntimeError("All trackers failed (HTTP + UDP).")
+                print(f"[Tracker] {type(tracker_client).__name__} {tracker_client.url} failed → {e}")
+        
+        if not all_peers:
+            raise RuntimeError("All trackers failed (HTTP + UDP).")
+        
+        return list(all_peers)
 
     # async def announce(self) -> List[Tuple[str, int]]:
     #     scheme = self._scheme()
