@@ -1,10 +1,13 @@
+"""
+Functions for building and parsing messages according to the BitTorrent Peer Protocol.
+"""
 import struct
 from typing import Tuple, Optional
 
 from .message_types import MessageID
 
 PROTOCOL_STR = b"BitTorrent protocol"
-HANDSHAKE_LEN = 1 + len(PROTOCOL_STR) + 8 + 20 + 20  # pstrlen + pstr + reserved + info_hash + peer_id
+HANDSHAKE_LEN = 1 + len(PROTOCOL_STR) + 8 + 20 + 20
 
 def build_handshake(info_hash: bytes, peer_id: bytes) -> bytes:
     """
@@ -18,7 +21,7 @@ def build_handshake(info_hash: bytes, peer_id: bytes) -> bytes:
     return (
         bytes([len(PROTOCOL_STR)]) +
         PROTOCOL_STR +
-        b"\x00" * 8 +   # 8 reserved bytes, leave zeroed for now
+        b"\x00" * 8 +
         info_hash +
         peer_id
     )
@@ -37,7 +40,7 @@ def parse_handshake(data: bytes) -> Tuple[bytes, bytes]:
         raise ValueError(f"Invalid protocol string: {pstr!r}")
 
     offset = 1 + pstrlen
-    offset += 8     # 8 reserved bytes
+    offset += 8
     info_hash = data[offset: offset + 20]
     offset += 20
     peer_id = data[offset: offset + 20]
@@ -47,23 +50,23 @@ def parse_handshake(data: bytes) -> Tuple[bytes, bytes]:
 
     return info_hash, peer_id
 
-# ---- Message framing helpers ----
 def build_message(msg_id: MessageID, payload: bytes = b"") -> bytes:
     """
-    Frame a message: 4-byte big-endian length + 1-byte id + payload
-    length = 1 + len(payload)
+    Frame a message with 4-byte big-endian length prefix + 1-byte ID + payload.
     """
     length = 1 + len(payload)
-    return struct.pack(">I", length) + bytes([int(msg_id)]) + payload   # ">" → big-endian
-                                                                                # "I" → unsigned 4-byte integer
+    return struct.pack(">I", length) + bytes([int(msg_id)]) + payload
 
 def parse_message(stream_bytes: bytes) -> Optional[tuple]:
+    """
+    Parses a framed message from a byte stream.
+    Returns (msg_id, payload, total_bytes_consumed) or None if not enough data.
+    """
     if len(stream_bytes) < 4:
         return None
 
     length = struct.unpack(">I", stream_bytes[:4])[0]
     if length == 0:
-        # keep-alive (4 bytes header only)
         return "keep-alive", b"", 4
 
     total_needed = 4 + length

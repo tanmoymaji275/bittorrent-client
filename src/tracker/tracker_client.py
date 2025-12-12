@@ -12,11 +12,9 @@ class TrackerClient:
         self.port = port
 
         self.trackers = []
-        # Add primary announce URL
         if self.meta.announce:
             self._add_tracker_client(self.meta.announce)
         
-        # Add trackers from announce-list
         if self.meta.announce_list:
             for tier in self.meta.announce_list:
                 for url in tier:
@@ -30,7 +28,6 @@ class TrackerClient:
             self.trackers.append(HTTPTrackerClient(self.meta, self.peer_id, self.port, url=url))
         elif url.startswith("udp"):
             self.trackers.append(UDPTrackerClient(self.meta, self.peer_id, self.port, url=url))
-        # Add other protocols like ws:// for WebTorrent if needed
 
     async def _announce_one(self, client) -> List[Tuple[str, int]]:
         try:
@@ -55,16 +52,3 @@ class TrackerClient:
             raise RuntimeError("All trackers failed (HTTP + UDP).")
         
         return list(all_peers)
-
-    # async def announce(self) -> List[Tuple[str, int]]:
-    #     scheme = self._scheme()
-    #
-    #     if scheme in ("http", "https"):
-    #         client = HTTPTrackerClient(self.meta, self.peer_id, self.port)
-    #         return await client.announce()
-    #
-    #     if scheme == "udp":
-    #         client = UDPTrackerClient(self.meta, self.peer_id, self.port)
-    #         return await client.announce()
-    #
-    #     raise ValueError(f"Unsupported tracker scheme: {scheme}")

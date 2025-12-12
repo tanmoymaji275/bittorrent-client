@@ -16,12 +16,10 @@ class PieceManager:
         self.completed = [False] * self.num_pieces
         self.blocks = {i: {} for i in range(self.num_pieces)}
 
-        # NEW: piece reservation system
         self.in_progress = {}           # piece_idx → set(peers)
         self.piece_events = {}          # piece_idx → asyncio.Event
         self._lock = asyncio.Lock()
         
-        # Callback to access list of all peers (for Rarest-First)
         self.peers_provider = None
 
         self._compute_file_offsets()
@@ -47,7 +45,6 @@ class PieceManager:
             piece_start = idx * self.meta.piece_length
             remaining = piece_len
             
-            # Read piece data from disk. This logic mirrors `read_block` but allows reading unverified pieces.
             for f in self.meta.files:
                 f_start = f["offset"]
                 f_end   = f_start + f["length"]
@@ -108,7 +105,6 @@ class PieceManager:
         Returns the piece index or None.
         """
         async with self._lock:
-            # 1. Identify candidates: pieces this peer has, which we need (not done/reserved)
             candidates = []
             possible_pieces = peer.available_pieces()
             
@@ -121,7 +117,6 @@ class PieceManager:
                 candidates.append(idx)
 
             if candidates:
-                # 2. If no peers_provider, fallback to picking the first available piece.
                 if not self.peers_provider:
                     best_piece = candidates[0]
                 else:
@@ -282,12 +277,9 @@ class PieceManager:
             f_start = f["offset"]
             f_end   = f_start + f["length"]
 
-            # Check if this file overlaps with the requested range
             if piece_start >= f_end or piece_start + remaining <= f_start:
                 continue
             
-            # Calculate read bounds relative to this file
-            # Intersection of [piece_start, piece_start + remaining] and [f_start, f_end]
             read_abs_start = max(piece_start, f_start)
             read_abs_end = min(piece_start + remaining, f_end)
             
@@ -301,15 +293,12 @@ class PieceManager:
                     fp.seek(read_file_offset)
                     chunk = fp.read(read_count)
                     if len(chunk) != read_count:
-                        # File shorter than expected?
                         return None
                     data.extend(chunk)
             except OSError:
                 return None
                 
             remaining -= read_count
-            # piece_start moves forward conceptually, but we used absolute calc
-            # simpler: update piece_start to end of this read
             piece_start += read_count 
             
             if remaining <= 0:

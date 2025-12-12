@@ -1,13 +1,13 @@
 import asyncio
-import os
-import sys
 from pathlib import Path
+import sys
+import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from src.torrent.metainfo import TorrentMeta
-from src.tracker.tracker_client import TrackerClient
-from src.session_manager import SessionManager
+from torrent.metainfo import TorrentMeta
+from tracker.tracker_client import TrackerClient
+from session_manager import SessionManager
 
 
 async def main():

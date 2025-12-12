@@ -1,10 +1,15 @@
+"""
+Implements peer scoring logic for the ChokeManager.
+"""
 import math
 
+
 class PeerStats:
+    """Stores and calculates statistics for a single peer's performance."""
     def __init__(self):
         self.ewma_rate = 0.0
-        self.rate_history = []  # Stores recent rates for variance calculation
-        self.top_tier_count = 0 # Incremented each time peer is selected as a top uploader
+        self.rate_history = []
+        self.top_tier_count = 0
         
     def add_sample(self, rate, alpha=0.2, history_len=10):
         # Update Exponential Weighted Moving Average (EWMA)
@@ -13,14 +18,12 @@ class PeerStats:
         else:
             self.ewma_rate = (alpha * rate) + ((1 - alpha) * self.ewma_rate)
             
-        # Maintain a sliding window of recent rates for variance calculation
         self.rate_history.append(rate)
         if len(self.rate_history) > history_len:
             self.rate_history.pop(0)
             
     def get_variance_penalty(self):
-        # Calculate a penalty factor (0.0 to 1.0) based on rate stability.
-        # Higher variance (less stable rate) results in a lower factor.
+        """Calculates a penalty factor (0.0 to 1.0) based on rate stability."""
         if len(self.rate_history) < 2:
             return 1.0 # No penalty if insufficient history
             
@@ -31,18 +34,18 @@ class PeerStats:
         variance = sum((x - mean) ** 2 for x in self.rate_history) / len(self.rate_history)
         std_dev = math.sqrt(variance)
         
-        # Coefficient of Variation (CV)
-        # CV = std_dev / mean. A higher CV indicates greater instability.
+        # Coefficient of Variation (CV): A higher CV indicates greater instability.
         cv = std_dev / mean
-        # The penalty reduces the score as CV increases (e.g., CV=0 -> factor=1, CV=1 -> factor=0.5)
         return 1.0 / (1.0 + cv)
 
+
 class PeerScorer:
+    """Calculates a comprehensive score for a peer based on performance and reliability."""
     def __init__(self):
         self.stats = {} # Maps peer objects to their PeerStats instances
 
     def get_stats(self, peer):
-        # Retrieves or creates PeerStats for a given peer.
+        """Retrieves or creates PeerStats for a given peer."""
         if peer not in self.stats:
             self.stats[peer] = PeerStats()
         return self.stats[peer]
@@ -59,24 +62,18 @@ class PeerScorer:
         """
         st = self.get_stats(peer)
         
-        # 1. Update internal stats before calculating score
         st.add_sample(current_rate)
         
-        # 2. Calculate Components of the Score
-        
         # Base Performance: Blend of current rate and smoothed historical average.
-        # This gives weight to recent performance while retaining historical context.
         base_performance = (0.7 * current_rate) + (0.3 * st.ewma_rate)
         
         # Stability: Apply a penalty if the peer's rate is highly variable.
         stability_factor = st.get_variance_penalty()
         
         # Trust: Apply a bonus based on how many times the peer has been a top contributor.
-        # This fosters loyalty and rewards consistent good behavior. Capped at 2x bonus.
         trust_bonus = min(2.0, 1.0 + (st.top_tier_count * 0.01))
         
         # Final Score: Combine all factors.
         final_score = base_performance * stability_factor * trust_bonus
         
         return final_score
-

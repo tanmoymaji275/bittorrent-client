@@ -1,3 +1,6 @@
+"""
+Data structures for representing Bencoded types.
+"""
 __all__ = [
     "BencodeInt",
     "BencodeString",
@@ -7,11 +10,10 @@ __all__ = [
 
 
 class BencodeType:
-    """Base class for all bencode data types."""
-    pass
-
-
+    """Base class for all Bencode data types."""
+    
 class BencodeInt(BencodeType):
+    """Represents a Bencoded integer."""
     def __init__(self, value: int):
         if not isinstance(value, int):
             raise TypeError("BencodeInt requires an integer.")
@@ -22,6 +24,7 @@ class BencodeInt(BencodeType):
 
 
 class BencodeString(BencodeType):
+    """Represents a Bencoded byte string."""
     def __init__(self, value: bytes):
         if not isinstance(value, (bytes, bytearray)):
             raise TypeError("BencodeString requires bytes.")
@@ -32,6 +35,7 @@ class BencodeString(BencodeType):
 
 
 class BencodeList(BencodeType):
+    """Represents a Bencoded list."""
     def __init__(self, value: list):
         if not isinstance(value, list):
             raise TypeError("BencodeList requires a list.")
@@ -42,6 +46,7 @@ class BencodeList(BencodeType):
 
 
 class BencodeDict(BencodeType):
+    """Represents a Bencoded dictionary."""
     def __init__(self, value: dict):
         if not isinstance(value, dict):
             raise TypeError("BencodeDict requires a dict.")

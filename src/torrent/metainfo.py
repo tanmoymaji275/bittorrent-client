@@ -53,39 +53,35 @@ def extract_info_bytes(raw: bytes) -> bytes:
 
 
 class TorrentMeta:
+    """
+    Parses a .torrent file and provides access to its metadata.
+    """
     def __init__(self, path: Path):
         self.path = Path(path)
 
-        # Load raw bytes
         raw = self.path.read_bytes()
 
-        # ----------- NEW FIX: extract raw info bytes -----------
         self.info_bytes = extract_info_bytes(raw)
         self.info_hash = hashlib.sha1(self.info_bytes).digest()
 
-        # Decode full torrent structure normally
         root = decode(raw)
         if not isinstance(root, BencodeDict):
             raise ValueError("Invalid torrent: root must be a dictionary")
 
         self.data = root.value
 
-        # ------------------ INFO ------------------
         if b"info" not in self.data:
             raise ValueError("Torrent missing 'info' dictionary")
 
         info_b = self.data[b"info"]
         self.info = info_b.value
 
-        # ------------------ NAME ------------------
         name_b = self.info.get(b"name")
         self.name = name_b.value.decode() if isinstance(name_b, BencodeString) else None
 
-        # ------------------ ANNOUNCE URL ------------------
         ann_b = self.data.get(b"announce")
         self.announce = ann_b.value.decode() if isinstance(ann_b, BencodeString) else None
 
-        # ------------------ ANNOUNCE-LIST ------------------
         self.announce_list = None
         ann_list_b = self.data.get(b"announce-list")
 
@@ -101,16 +97,13 @@ class TorrentMeta:
             if tiers:
                 self.announce_list = tiers
 
-        # ------------------ PIECE LENGTH ------------------
         piece_len_b = self.info.get(b"piece length")
         self.piece_length = piece_len_b.value
 
-        # ------------------ PIECES ------------------
         pieces_b = self.info.get(b"pieces")
         raw_pieces = pieces_b.value
         self.pieces = [raw_pieces[i:i+20] for i in range(0, len(raw_pieces), 20)]
 
-        # ------------------ FILES ------------------
         if b"files" in self.info:
             self.files = []
             for f_entry in self.info[b"files"].value:

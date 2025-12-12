@@ -1,3 +1,6 @@
+"""
+Peer package for managing peer connections, protocol, and request pipeline.
+"""
 from pieces.piece_manager import PieceManager
 from .message_types import MessageID
 from .peer_connection import PeerConnection

@@ -7,6 +7,10 @@ from .peer_protocol import build_handshake, parse_handshake, build_message, HAND
 
 
 class PeerConnection:
+    """
+    Manages a single TCP connection to a peer, including handshake,
+    message sending/receiving, and state tracking.
+    """
     def __init__(self, ip, port, torrent_meta, peer_id):
         self.reader = None
         self.writer = None
@@ -17,54 +21,45 @@ class PeerConnection:
         self.remote_peer_id = None
         self.closed = False
 
-        # Raw bitfield bytes (or None if not received)
         self.bitfield = None
-        # Set of piece indices learned via HAVE messages
         self.have = set()
         
-        # Download/Upload statistics for rate calculation
         self.downloaded_sample = 0
         self.uploaded_sample = 0
         self.last_reset_time = time.time()
         
-        # Choking state from our perspective and peer's perspective
-        self.am_choking = True      # We are choking this peer
-        self.am_interested = False  # We are interested in this peer
-        self.peer_choking = True    # This peer is choking us
-        self.peer_interested = False # This peer is interested in us
+        self.am_choking = True
+        self.am_interested = False
+        self.peer_choking = True
+        self.peer_interested = False
 
     async def connect(self):
-        # Apply a bounded timeout for TCP connect to avoid long stalls on Windows (e.g., WinError 121)
-        CONNECT_TIMEOUT_SECONDS = 5
+        connect_timeout_seconds = 5
         try:
             self.reader, self.writer = await asyncio.wait_for(
                 asyncio.open_connection(self.ip, self.port),
-                timeout=CONNECT_TIMEOUT_SECONDS,
+                timeout=connect_timeout_seconds,
             )
         except asyncio.TimeoutError:
             raise ConnectionError(
                 f"Could not connect to peer {self.ip}:{self.port} -> connection timed out"
             )
         except OSError as e:
-            # Map common Windows network errors to a cleaner message
             if getattr(e, "win-error", None) == 121:
                 raise ConnectionError(
                     f"Could not connect to peer {self.ip}:{self.port} -> [WinError 121] The semaphore timeout period expired"
-                )
-            raise ConnectionError(f"Could not connect to peer {self.ip}:{self.port} -> {e}")
+                ) from e
+            raise ConnectionError(f"Could not connect to peer {self.ip}:{self.port} -> {e}") from e
 
-        # ---- SEND HANDSHAKE ----
         handshake = build_handshake(self.meta.info_hash, self.peer_id)
         self.writer.write(handshake)
         await self.writer.drain()
 
-        # ---- READ HANDSHAKE ----
         try:
-            # use HANDSHAKE_LEN from peer_protocol for clarity, with a bounded read timeout
-            HANDSHAKE_TIMEOUT_SECONDS = 5
+            handshake_timeout_seconds = 5
             resp = await asyncio.wait_for(
                 self.reader.readexactly(HANDSHAKE_LEN),
-                timeout=HANDSHAKE_TIMEOUT_SECONDS,
+                timeout=handshake_timeout_seconds,
             )
         except asyncio.TimeoutError:
             raise ConnectionError("Timed out waiting for handshake from peer")
@@ -77,7 +72,6 @@ class PeerConnection:
         if info_hash != self.meta.info_hash:
             raise ValueError("Peer sent a handshake with wrong info_hash")
 
-        # after handshake, peers often send BITFIELD; leave reading to read_message()
         return remote_pid
     
     def reset_stats(self):
@@ -98,8 +92,8 @@ class PeerConnection:
         return d_val, u_val, duration
 
     def reset_download_stats(self):
-        # Alias for backward compatibility if needed, or remove. 
-        d, u, t = self.reset_stats()
+        # This method is not used. Keeping for now but could be removed.
+        d, _, t = self.reset_stats() # _ is for unused uploaded_sample
         return d, t
 
     async def send(self, msg_id, payload=b"", drain=True):
@@ -112,15 +106,10 @@ class PeerConnection:
             if drain:
                 await self.writer.drain()
             
-            # Track upload
             if msg_id == MessageID.PIECE:
-                # Payload is index(4) + begin(4) + block
-                # Actual data size is len(payload) - 8
-                # But strictly speaking, we uploaded the whole payload overhead too.
-                # TCP/IP overhead is ignored, but application bytes count.
-                self.uploaded_sample += len(payload)
+                # payload contains (index + begin + block_data). We count the block_data size.
+                self.uploaded_sample += len(payload) - 8 
             
-            # Update our state tracking
             if msg_id == MessageID.CHOKE:
                 self.am_choking = True
             elif msg_id == MessageID.UNCHOKE:
@@ -139,7 +128,7 @@ class PeerConnection:
 
         Returns:
             tuple: (msg_id, payload) or (None, None) on connection close/error.
-            Note: 'keepalive' is returned as msg_id for keep-alive messages.
+            'keepalive' is returned as msg_id for keep-alive messages.
         """
         try:
             header = await self.reader.readexactly(4)
@@ -150,23 +139,18 @@ class PeerConnection:
         length = struct.unpack(">I", header)[0]
 
         if length == 0:
-            # keep-alive message
             return "keepalive", None
 
         try:
             msg_id = (await self.reader.readexactly(1))[0]
             payload = await self.reader.readexactly(length - 1)
             
-            # Count bandwidth
             self.downloaded_sample += (length - 1)
             
         except asyncio.IncompleteReadError:
             self.closed = True
             return None, None
 
-        # ------------------------------
-        # Handle State Updates
-        # ------------------------------
         if msg_id == int(MessageID.CHOKE):
             self.peer_choking = True
         elif msg_id == int(MessageID.UNCHOKE):
@@ -176,55 +160,38 @@ class PeerConnection:
         elif msg_id == int(MessageID.NOT_INTERESTED):
             self.peer_interested = False
 
-        # ------------------------------
-        # Handle BITFIELD and HAVE
-        # ------------------------------
-        # MessageID constants come from message_types.py
         if msg_id == int(MessageID.BITFIELD):
-            # BITFIELD payload is a raw bitmap of pieces (big-endian within each byte)
-            # store bytes directly for later queries
-            self.bitfield = payload  # bytes
+            self.bitfield = payload
             return msg_id, payload
 
         if msg_id == int(MessageID.HAVE):
-            # HAVE payload is 4-byte piece index (big-endian)
             if len(payload) >= 4:
                 piece_index = int.from_bytes(payload[:4], "big")
                 self.have.add(piece_index)
             else:
-                # malformed HAVE — ignore but return it
-                pass
+                pass # Malformed HAVE message
             return msg_id, payload
 
-        # For all other messages, just return as before
         return msg_id, payload
 
     def has_piece(self, idx: int) -> bool:
         """Return True if the peer appears to have piece idx.
 
-        Checks:
-          1) explicit HAVE messages (self.have)
-          2) bitfield bytes (self.bitfield) if present
-
-        If neither is present, returns False (unknown).
+        Checks explicit HAVE messages and bitfield (if present).
         """
-        # Check explicit HAVE set first
         if idx in self.have:
             return True
 
-        # If we have a bitfield, decode it:
         if self.bitfield:
             byte_index = idx // 8
             if byte_index < len(self.bitfield):
-                # Bits in bitfield are ordered MSB -> LSB per spec
                 bit_in_byte = 7 - (idx % 8)
                 return ((self.bitfield[byte_index] >> bit_in_byte) & 1) == 1
 
         return False
 
     def available_pieces(self):
-        # Return an iterable of piece indices this peer claims to have.
-        # Prefer bitfield if present (gives full view)
+        """Return an iterable of piece indices this peer claims to have."""
         if self.bitfield:
             bits = []
             total_pieces = self.meta.num_pieces
@@ -233,7 +200,6 @@ class PeerConnection:
                     bits.append(idx)
             return bits
 
-        # Fallback to explicit HAVE messages
         return sorted(self.have)
 
     def close(self):
@@ -242,12 +208,10 @@ class PeerConnection:
 
         self.writer.close()
 
-        # Try waiting for close only if inside an event loop
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(self.writer.wait_closed())
         except RuntimeError:
-            # No running loop (close called outside async context)
-            pass
+            pass # No running loop (close called outside async context)
 
         self.closed = True

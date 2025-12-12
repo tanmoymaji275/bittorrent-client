@@ -1,6 +1,10 @@
+"""
+Defines constants for BitTorrent Peer Protocol message IDs and block sizes.
+"""
 from enum import IntEnum
 
 class MessageID(IntEnum):
+    """IDs for standard BitTorrent peer protocol messages."""
     CHOKE = 0
     UNCHOKE = 1
     INTERESTED = 2
@@ -11,5 +15,5 @@ class MessageID(IntEnum):
     PIECE = 7
     CANCEL = 8
 
-# Block size
+# Standard block size for piece requests
 BLOCK_LEN = 16 * 1024   # 16 KB

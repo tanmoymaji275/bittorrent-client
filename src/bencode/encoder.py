@@ -1,30 +1,30 @@
-from .structure import *
+"""
+Bencode encoder for BitTorrent metainfo and tracker responses.
+"""
+from .structure import BencodeDict, BencodeInt, BencodeList, BencodeString
 
 
 def encode(obj) -> bytes:
-    """Encode a Python/BencodeType object into bencoded bytes."""
+    """Encodes a Python object or BencodeType into bencoded bytes."""
 
-    # --- If you're passing raw Python types ---
-    if isinstance(obj, int):
-        return encode_int(obj)
-    if isinstance(obj, str):
-        return encode_str(obj)
+    if isinstance(obj, (int, BencodeInt)):
+        value = obj if isinstance(obj, int) else obj.value
+        return encode_int(value)
+    
+    if isinstance(obj, (str, BencodeString)):
+        value = obj if isinstance(obj, str) else obj.value
+        return encode_str(value)
+    
     if isinstance(obj, bytes):
         return encode_bytes(obj)
-    if isinstance(obj, list):
-        return encode_list(obj)
-    if isinstance(obj, dict):
-        return encode_dict(obj)
 
-    # --- If you're using custom wrapper classes ---
-    if isinstance(obj, BencodeInt):
-        return encode_int(obj.value)
-    if isinstance(obj, BencodeString):
-        return encode_bytes(obj.value)
-    if isinstance(obj, BencodeList):
-        return encode_list(obj.value)
-    if isinstance(obj, BencodeDict):
-        return encode_dict(obj.value)
+    if isinstance(obj, (list, BencodeList)):
+        value = obj if isinstance(obj, list) else obj.value
+        return encode_list(value)
+
+    if isinstance(obj, (dict, BencodeDict)):
+        value = obj if isinstance(obj, dict) else obj.value
+        return encode_dict(value)
 
     raise TypeError(f"Cannot bencode object of type {type(obj)}")
 
@@ -34,30 +34,35 @@ def encode(obj) -> bytes:
 # ------------------------------------------------------------
 
 def encode_int(n: int) -> bytes:
+    """Encodes an integer to bencoded bytes (e.g., i123e)."""
     return f"i{n}e".encode()
 
 
 def encode_bytes(b: bytes) -> bytes:
+    """Encodes bytes to bencoded bytes (e.g., 4:spam)."""
     return str(len(b)).encode() + b":" + b
 
 
 def encode_str(s: str) -> bytes:
+    """Encodes a string to bencoded bytes (e.g., 4:spam)."""
     b = s.encode()
     return encode_bytes(b)
 
 
 def encode_list(lst: list) -> bytes:
+    """Encodes a list to bencoded bytes (e.g., l4:spame)."""
     encoded_items = b''.join(encode(x) for x in lst)
     return b"l" + encoded_items + b"e"
 
 
 def encode_dict(d: dict) -> bytes:
+    """Encodes a dictionary to bencoded bytes (e.g., d3:cow3:moo4:spam4:eggse)."""
     result = b"d"
 
     def key_to_bytes(k):
         return k if isinstance(k, bytes) else k.encode()
 
-    for key in sorted(d.keys(), key=lambda k: key_to_bytes(k)):
+    for key in sorted(d.keys(), key=key_to_bytes):
         key_bytes = key_to_bytes(key)
         result += encode_bytes(key_bytes)
         result += encode(d[key])

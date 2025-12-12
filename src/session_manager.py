@@ -21,8 +21,6 @@ class SessionManager:
         self.download_dir = download_dir
         self.running = False
 
-        # Shared piece manager for all peers.
-        # It's linked to the peers list for the Rarest-First strategy.
         self.piece_manager = PieceManager(self.meta, download_dir=self.download_dir)
         self.piece_manager.set_peers_provider(lambda: self.peers)
 
@@ -56,38 +54,31 @@ class SessionManager:
         Start the download session. Verifies existing data,
         launches pipelines for connected peers, and monitors progress.
         """
-        # Verify existing data for resume
         self.piece_manager.verify_existing_data()
         self.running = True
 
         print("[Session] Starting pipelines...")
 
-        # Launch pipelines for already connected peers
         for peer in self.peers:
             self.tasks.append(
                 asyncio.create_task(RequestPipeline(peer, self.piece_manager).start())
             )
 
-        # Start Choke Manager Loop
         self.tasks.append(
             asyncio.create_task(self.choke_manager.run_loop(lambda: self.peers))
         )
 
         try:
-            # Monitor until download complete
             await self.monitor_until_done()
 
             print("[Session] Torrent download complete!")
         except asyncio.CancelledError:
-            # Graceful shutdown on cancellation (Ctrl+C or outer task cancel)
             print("[Session] Cancelled. Shutting down gracefully...")
         finally:
-            # Cancel all remaining tasks
             if self.tasks:
                 for t in self.tasks:
                     t.cancel()
 
-            # Close peers
             for peer in self.peers:
                 peer.close()
 

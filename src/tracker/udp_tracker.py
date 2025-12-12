@@ -23,14 +23,11 @@ class UDPTrackerProtocol(asyncio.DatagramProtocol):
 
     def connection_made(self, transport):
         self.transport = transport
-        # We don't create the future here because we might reuse the protocol?
-        # Actually for this simple client we create a new future for each request.
         pass
 
     def datagram_received(self, data, addr):
         if self.response_future and not self.response_future.done():
             self.response_future.set_result(data)
-        # Call the registered callback
         self.on_response_received(data, addr)
 
     def error_received(self, exc):
@@ -59,9 +56,12 @@ class UDPTrackerProtocol(asyncio.DatagramProtocol):
 
 
 class UDPTrackerClient:
+    """
+    Communicates with a UDP tracker to announce download status and retrieve peers.
+    """
     def __init__(self, torrent_meta, peer_id: bytes, port=6881, timeout=5.0, url: str = None):
         self.meta = torrent_meta
-        self.peer_id = peer_id  # MUST be 20 bytes
+        self.peer_id = peer_id
         self.port = port
         self.timeout = timeout
         self.protocol: Optional[UDPTrackerProtocol] = None
@@ -91,7 +91,6 @@ class UDPTrackerClient:
 
     async def _create_endpoint(self):
         loop = asyncio.get_running_loop()
-        # Use non-connected socket (no remote_addr) to avoid issues with multi-homed trackers
         self.transport, self.protocol = await loop.create_datagram_endpoint(
             lambda: UDPTrackerProtocol(self._on_response, self._on_timeout),
             local_addr=('0.0.0.0', 0)
