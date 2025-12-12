@@ -37,6 +37,9 @@ class SessionManager:
             return None
 
     async def start(self):
+        # Verify existing data for resume
+        self.piece_manager.verify_existing_data()
+
         print("[Session] Starting pipelines...")
 
         # Launch pipelines

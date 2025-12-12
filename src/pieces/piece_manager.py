@@ -5,6 +5,7 @@ from pathlib import Path
 from peer.message_types import BLOCK_LEN
 
 
+# noinspection DuplicatedCode
 class PieceManager:
     def __init__(self, torrent_meta, download_dir="."):
         self.meta = torrent_meta
@@ -23,6 +24,67 @@ class PieceManager:
 
         self._compute_file_offsets()
         self._prepare_output_paths()
+
+    def verify_existing_data(self):
+        """
+        Scan existing files and verify pieces.
+        Populate self.completed based on successful hash checks.
+        """
+        print("[PieceManager] Verifying existing data...")
+        verified_count = 0
+        
+        for idx in range(self.num_pieces):
+            piece_len = self.get_piece_length(idx)
+            
+            piece_data = bytearray()
+            piece_start = idx * self.meta.piece_length
+            remaining = piece_len
+            
+            # Read piece data from disk. This logic mirrors `read_block` but allows reading unverified pieces.
+            for f in self.meta.files:
+                f_start = f["offset"]
+                f_end   = f_start + f["length"]
+
+                if piece_start >= f_end or piece_start + remaining <= f_start:
+                    continue
+                
+                read_abs_start = max(piece_start, f_start)
+                read_abs_end = min(piece_start + remaining, f_end)
+                
+                read_count = read_abs_end - read_abs_start
+                read_file_offset = read_abs_start - f_start
+                
+                out_path = self.download_dir / f["path"]
+                
+                if not out_path.exists():
+                    piece_data = None
+                    break
+                
+                try:
+                    with out_path.open("rb") as fp:
+                        fp.seek(read_file_offset)
+                        chunk = fp.read(read_count)
+                        if len(chunk) != read_count:
+                            piece_data = None
+                            break
+                        piece_data.extend(chunk)
+                except OSError:
+                    piece_data = None
+                    break
+                
+                piece_start += read_count
+                remaining -= read_count
+                if remaining <= 0:
+                    break
+            
+            if piece_data and len(piece_data) == piece_len:
+                actual_hash = hashlib.sha1(piece_data).digest()
+                if actual_hash == self.meta.pieces[idx]:
+                    self.completed[idx] = True
+                    verified_count += 1
+                    # print(f"[PieceManager] Piece {idx} verified.")
+        
+        print(f"[PieceManager] Verification complete. {verified_count}/{self.num_pieces} pieces available.")
 
     def set_peers_provider(self, provider_func):
         """
@@ -112,7 +174,8 @@ class PieceManager:
         self.blocks[idx][offset] = block
 
         if self.piece_complete(idx):
-            await self._finalize_piece(idx)
+            return await self._finalize_piece(idx)
+        return True
 
     async def _finalize_piece(self, idx):
         piece_len = self.get_piece_length(idx)
@@ -129,12 +192,13 @@ class PieceManager:
         if expected != actual:
             print(f"[!] Piece {idx} failed hash check — discarding")
             self.blocks[idx].clear()
-            return
+            return False
 
         self._write_piece_to_disk(idx, assembled)
         await self.mark_piece_completed(idx)
         self.blocks[idx].clear()
         print(f"[✓] Piece {idx} written")
+        return True
 
     # -------------------------- FILE IO --------------------------
 

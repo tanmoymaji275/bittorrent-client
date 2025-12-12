@@ -12,7 +12,7 @@ from src.session_manager import SessionManager
 
 
 async def main():
-    torrent_path = Path("torrents/a.torrent")
+    torrent_path = Path("torrents/big-buck-bunny.torrent")
     meta = TorrentMeta(torrent_path)
     print("announce:", meta.announce)
     print("announce_list:", meta.announce_list)

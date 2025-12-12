@@ -109,7 +109,10 @@ class RequestPipeline:
                 block   = payload[8:]
 
                 if got_idx == idx:
-                    await self.pieces.store_block(idx, begin, block)
+                    success = await self.pieces.store_block(idx, begin, block)
+                    if not success:
+                        return False
+
                     if begin in pending:
                         pending.remove(begin)
 
