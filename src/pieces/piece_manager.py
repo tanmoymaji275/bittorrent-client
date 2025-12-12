@@ -16,7 +16,8 @@ class PieceManager:
         self.blocks = {i: {} for i in range(self.num_pieces)}
 
         # NEW: piece reservation system
-        self.in_progress = {}           # piece_idx → peer
+        self.in_progress = {}           # piece_idx → set(peers)
+        self.piece_events = {}          # piece_idx → asyncio.Event
         self._lock = asyncio.Lock()
         
         # Callback to access list of all peers (for Rarest-First)
@@ -24,6 +25,11 @@ class PieceManager:
 
         self._compute_file_offsets()
         self._prepare_output_paths()
+
+    def get_piece_event(self, idx):
+        if idx not in self.piece_events:
+            self.piece_events[idx] = asyncio.Event()
+        return self.piece_events[idx]
 
     def verify_existing_data(self):
         """
@@ -103,10 +109,9 @@ class PieceManager:
         async with self._lock:
             # 1. Identify candidates: pieces this peer has, which we need (not done/reserved)
             candidates = []
-            
-            # Using peer.available_pieces() ensures we only consider pieces the peer claims to have.
             possible_pieces = peer.available_pieces()
             
+            # Standard Pass: Find unreserved pieces
             for idx in possible_pieces:
                 if self.completed[idx]:
                     continue
@@ -114,43 +119,59 @@ class PieceManager:
                     continue
                 candidates.append(idx)
 
-            if not candidates:
-                return None
+            if candidates:
+                # 2. If no peers_provider, fallback to picking the first available piece.
+                if not self.peers_provider:
+                    best_piece = candidates[0]
+                else:
+                    all_peers = self.peers_provider()
+                    def get_frequency(piece_idx):
+                        count = 0
+                        for p in all_peers:
+                            if p.has_piece(piece_idx):
+                                count += 1
+                        return count
+                    candidates.sort(key=get_frequency)
+                    best_piece = candidates[0]
 
-            # 2. If no peers_provider, fallback to picking the first available piece.
-            if not self.peers_provider:
-                return candidates[0]
+                if best_piece not in self.in_progress:
+                    self.in_progress[best_piece] = set()
+                self.in_progress[best_piece].add(peer)
+                return best_piece
 
-            all_peers = self.peers_provider()
+            # Endgame Pass: Find in-progress pieces to help with
+            endgame_candidates = []
+            for idx in possible_pieces:
+                if self.completed[idx]:
+                    continue
+                if idx in self.in_progress and peer not in self.in_progress[idx]:
+                    endgame_candidates.append(idx)
+
+            if endgame_candidates:
+                # Pick the one with fewest peers (spread load)
+                endgame_candidates.sort(key=lambda i: len(self.in_progress[i]))
+                best_piece = endgame_candidates[0]
+                self.in_progress[best_piece].add(peer)
+                return best_piece
             
-            # 3. Calculate rarity for each candidate.
-            # The goal is to prioritize pieces that fewer peers in the swarm possess,
-            # ensuring critical pieces are acquired before they become unavailable.
-            def get_frequency(piece_idx):
-                count = 0
-                for p in all_peers:
-                    if p.has_piece(piece_idx):
-                        count += 1
-                return count
-
-            # Sort by frequency (ascending) to get the rarest pieces first.
-            candidates.sort(key=get_frequency)
-
-            best_piece = candidates[0]
-            self.in_progress[best_piece] = peer
-            return best_piece
+            return None
 
     async def release_piece(self, idx, peer):
-        """Release reservation if this peer was the owner."""
+        """Release reservation if this peer was working on it."""
         async with self._lock:
-            owner = self.in_progress.get(idx)
-            if owner is peer or owner is None:
-                self.in_progress.pop(idx, None)
+            if idx in self.in_progress:
+                peers_set = self.in_progress[idx]
+                peers_set.discard(peer)
+                if not peers_set:
+                    self.in_progress.pop(idx, None)
 
     async def mark_piece_completed(self, idx):
         async with self._lock:
             self.completed[idx] = True
             self.in_progress.pop(idx, None)
+            if idx in self.piece_events:
+                self.piece_events[idx].set()
+                del self.piece_events[idx]
 
     # -------------------------- BASIC METHODS --------------------------
 
@@ -178,6 +199,10 @@ class PieceManager:
         return True
 
     async def _finalize_piece(self, idx):
+        # Optimization: If another peer already finished it, return True
+        if self.completed[idx]:
+            return True
+
         piece_len = self.get_piece_length(idx)
         assembled = bytearray()
 
@@ -239,8 +264,12 @@ class PieceManager:
             if remaining <= 0:
                 break
                 
-    def read_block(self, piece_idx, offset, length):
-        """Read a block of data from disk for uploading."""
+    async def read_block(self, piece_idx, offset, length):
+        """Read a block of data from disk for uploading (non-blocking)."""
+        return await asyncio.to_thread(self._read_block_sync, piece_idx, offset, length)
+
+    def _read_block_sync(self, piece_idx, offset, length):
+        """Synchronous implementation of read_block to be run in a thread."""
         if not self.completed[piece_idx]:
             return None
             

@@ -4,7 +4,7 @@ from .message_types import MessageID, BLOCK_LEN
 
 
 class RequestPipeline:
-    def __init__(self, peer_conn, piece_manager, pipeline_depth=5, block_timeout=10):
+    def __init__(self, peer_conn, piece_manager, pipeline_depth=20, block_timeout=10):
         self.peer = peer_conn
         self.pieces = piece_manager
         self.pipeline_depth = pipeline_depth
@@ -59,7 +59,7 @@ class RequestPipeline:
         if length > 32 * 1024: 
             return
 
-        block = self.pieces.read_block(index, begin, length)
+        block = await self.pieces.read_block(index, begin, length)
         if block:
             # Send PIECE message: index(4) + begin(4) + block
             resp_payload = payload[0:8] + block
@@ -79,20 +79,48 @@ class RequestPipeline:
             pending.add(offset)
             offset += blen
 
+        # Get completion event for this piece (Endgame / Fast Cancel)
+        piece_done_event = self.pieces.get_piece_event(idx)
+
         # Process incoming blocks
         while not self.pieces.piece_complete(idx):
 
             # FAST EXIT: If torrent is fully done, stop immediately
             if self.pieces.all_pieces_done():
                 return True
+                
+            # If piece finished elsewhere (Endgame), stop immediately
+            if piece_done_event.is_set():
+                return True
 
-            try:
-                msg_id, payload = await asyncio.wait_for(
-                    self.peer.read_message(),
-                    timeout=self.block_timeout
-                )
-            except asyncio.TimeoutError:
+            # Create tasks for reading message and waiting for piece completion
+            read_task = asyncio.create_task(self.peer.read_message())
+            event_task = asyncio.create_task(piece_done_event.wait())
+            
+            done, pending = await asyncio.wait(
+                [read_task, event_task],
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=self.block_timeout
+            )
+            
+            # Cancel pending tasks
+            for t in pending:
+                t.cancel()
+                
+            if not done:
+                # Timeout occurred
                 print(f"[Pipeline] Block timeout for piece {idx}")
+                return False
+                
+            if event_task in done:
+                # Piece finished by another peer
+                return True
+                
+            # We got a message
+            try:
+                msg_id, payload = read_task.result()
+            except Exception:
+                # Connection error or cancellation
                 return False
 
             if msg_id is None:

@@ -3,7 +3,6 @@ from pathlib import Path
 import sys
 import os
 
-# Add src to sys.path so submodules can import 'bencode' as a top-level package
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.torrent.metainfo import TorrentMeta
@@ -12,7 +11,7 @@ from src.session_manager import SessionManager
 
 
 async def main():
-    torrent_path = Path("torrents/big-buck-bunny.torrent")
+    torrent_path = Path("torrents/a.torrent")
     meta = TorrentMeta(torrent_path)
     print("announce:", meta.announce)
     print("announce_list:", meta.announce_list)
@@ -28,8 +27,12 @@ async def main():
 
     print(f"[Main] Tracker returned {len(peers)} peers")
 
-    for ip, port in peers[:20]:
-        await session.add_peer(ip, port)
+    # Connect to peers in parallel
+    connect_tasks = [
+        session.add_peer(ip, port) 
+        for ip, port in peers[:50]
+    ]
+    await asyncio.gather(*connect_tasks)
 
     await session.start()
 
