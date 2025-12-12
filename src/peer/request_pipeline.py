@@ -3,8 +3,9 @@ import asyncio
 from .message_types import MessageID, BLOCK_LEN
 
 
+# noinspection PyTypeChecker
 class RequestPipeline:
-    def __init__(self, peer_conn, piece_manager, pipeline_depth=20, block_timeout=10):
+    def __init__(self, peer_conn, piece_manager, pipeline_depth=50, block_timeout=10):
         self.peer = peer_conn
         self.pieces = piece_manager
         self.pipeline_depth = pipeline_depth
@@ -72,12 +73,17 @@ class RequestPipeline:
         pending = set()
 
         # Fill initial pipeline window
+        requests_sent = 0
         while offset < length and len(pending) < self.pipeline_depth:
             blen = min(BLOCK_LEN, length - offset)
             payload = struct.pack(">III", idx, offset, blen)
-            await self.peer.send(MessageID.REQUEST, payload)
+            await self.peer.send(MessageID.REQUEST, payload, drain=False)
             pending.add(offset)
             offset += blen
+            requests_sent += 1
+            
+        if requests_sent > 0:
+            await self.peer.writer.drain()
 
         # Get completion event for this piece (Endgame / Fast Cancel)
         piece_done_event = self.pieces.get_piece_event(idx)
@@ -117,6 +123,7 @@ class RequestPipeline:
                 return True
                 
             # We got a message
+            # noinspection PyBroadException
             try:
                 msg_id, payload = read_task.result()
             except Exception:
@@ -145,12 +152,17 @@ class RequestPipeline:
                         pending.remove(begin)
 
                 # Slide window when possible
+                requests_sent = 0
                 while offset < length and len(pending) < self.pipeline_depth:
                     blen = min(BLOCK_LEN, length - offset)
                     payload = struct.pack(">III", idx, offset, blen)
-                    await self.peer.send(MessageID.REQUEST, payload)
+                    await self.peer.send(MessageID.REQUEST, payload, drain=False)
                     pending.add(offset)
                     offset += blen
+                    requests_sent += 1
+                
+                if requests_sent > 0:
+                    await self.peer.writer.drain()
 
         print(f"[Pipeline] Completed piece {idx}")
         return True

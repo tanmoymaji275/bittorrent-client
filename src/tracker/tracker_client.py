@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Tuple
 from .http_tracker import HTTPTrackerClient
 from .udp_tracker import UDPTrackerClient
@@ -30,16 +31,24 @@ class TrackerClient:
             self.trackers.append(UDPTrackerClient(self.meta, self.peer_id, self.port, url=url))
         # Add other protocols like ws:// for WebTorrent if needed
 
+    async def _announce_one(self, client) -> List[Tuple[str, int]]:
+        try:
+            peers = await client.announce()
+            print(f"[Tracker] {type(client).__name__} {client.url} returned {len(peers)} peers.")
+            return peers
+        except Exception as e:
+            print(f"[Tracker] {type(client).__name__} {client.url} failed → {e}")
+            return []
+
     async def announce(self) -> List[Tuple[str, int]]:
         all_peers = set()
-        for tracker_client in self.trackers:
-            try:
-                peers = await tracker_client.announce()
-                print(f"[Tracker] {type(tracker_client).__name__} {tracker_client.url} returned {len(peers)} peers.")
-                for peer in peers:
-                    all_peers.add(peer)
-            except Exception as e:
-                print(f"[Tracker] {type(tracker_client).__name__} {tracker_client.url} failed → {e}")
+        
+        tasks = [self._announce_one(client) for client in self.trackers]
+        results = await asyncio.gather(*tasks)
+        
+        for peer_list in results:
+            for peer in peer_list:
+                all_peers.add(peer)
         
         if not all_peers:
             raise RuntimeError("All trackers failed (HTTP + UDP).")

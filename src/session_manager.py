@@ -1,3 +1,6 @@
+"""
+SessionManager coordinates the download process, managing peers and the piece manager.
+"""
 import asyncio
 from peer.peer_connection import PeerConnection
 from peer.request_pipeline import RequestPipeline
@@ -5,11 +8,16 @@ from peer.choke_manager import ChokeManager
 from pieces.piece_manager import PieceManager
 
 class SessionManager:
+    """
+    Manages the torrent session, including peer connections,
+    download pipelines, and the choke algorithm.
+    """
     def __init__(self, torrent_meta, peer_id, download_dir="."):
-        self.tasks = None
+        self.tasks = []
         self.meta = torrent_meta
         self.peer_id = peer_id
         self.download_dir = download_dir
+        self.running = False
 
         # Shared piece manager for all peers.
         # It's linked to the peers list for the Rarest-First strategy.
@@ -31,23 +39,33 @@ class SessionManager:
             print(f"[Session] Connected to peer {ip}:{port}")
 
             self.peers.append(conn)
+
+            if self.running:
+                task = asyncio.create_task(RequestPipeline(conn, self.piece_manager).start())
+                self.tasks.append(task)
+
             return conn
         except Exception as e:
             print(f"[Session] Failed to connect to {ip}:{port} → {e}")
             return None
 
     async def start(self):
+        """
+        Start the download session. Verifies existing data,
+        launches pipelines for connected peers, and monitors progress.
+        """
         # Verify existing data for resume
         self.piece_manager.verify_existing_data()
+        self.running = True
 
         print("[Session] Starting pipelines...")
 
-        # Launch pipelines
-        self.tasks = [
-            asyncio.create_task(RequestPipeline(peer, self.piece_manager).start())
-            for peer in self.peers
-        ]
-        
+        # Launch pipelines for already connected peers
+        for peer in self.peers:
+            self.tasks.append(
+                asyncio.create_task(RequestPipeline(peer, self.piece_manager).start())
+            )
+
         # Start Choke Manager Loop
         self.tasks.append(
             asyncio.create_task(self.choke_manager.run_loop(lambda: self.peers))

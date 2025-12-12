@@ -45,7 +45,7 @@ class PeerConnection:
             )
         except OSError as e:
             # Map common Windows network errors to a cleaner message
-            if getattr(e, "winerror", None) == 121:
+            if getattr(e, "win-error", None) == 121:
                 raise ConnectionError(
                     f"Could not connect to peer {self.ip}:{self.port} -> [WinError 121] The semaphore timeout period expired"
                 )
@@ -100,14 +100,15 @@ class PeerConnection:
         d, u, t = self.reset_stats()
         return d, t
 
-    async def send(self, msg_id, payload=b""):
+    async def send(self, msg_id, payload=b"", drain=True):
         if self.closed:
             return
 
         try:
             msg = build_message(msg_id, payload)
             self.writer.write(msg)
-            await self.writer.drain()
+            if drain:
+                await self.writer.drain()
             
             # Track upload
             if msg_id == MessageID.PIECE:

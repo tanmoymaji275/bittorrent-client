@@ -11,7 +11,7 @@ from src.session_manager import SessionManager
 
 
 async def main():
-    torrent_path = Path("torrents/a.torrent")
+    torrent_path = Path("torrents/big-buck-bunny.torrent")
     meta = TorrentMeta(torrent_path)
     print("announce:", meta.announce)
     print("announce_list:", meta.announce_list)
@@ -27,14 +27,21 @@ async def main():
 
     print(f"[Main] Tracker returned {len(peers)} peers")
 
+    # Start the session loop (verification, choke manager, monitoring)
+    # This enables "fast resume" - downloading starts as soon as the first peer connects.
+    session_task = asyncio.create_task(session.start())
+
     # Connect to peers in parallel
     connect_tasks = [
         session.add_peer(ip, port) 
         for ip, port in peers[:50]
     ]
+    # We don't strictly need to wait for all connections to finish before continuing,
+    # but we do need to keep the main loop alive.
     await asyncio.gather(*connect_tasks)
 
-    await session.start()
+    # Wait for the download to complete
+    await session_task
 
 
 if __name__ == "__main__":
