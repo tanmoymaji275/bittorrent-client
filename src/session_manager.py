@@ -2,10 +2,12 @@
 SessionManager coordinates the download process, managing peers and the piece manager.
 """
 import asyncio
+
+from peer.choke_manager import ChokeManager
 from peer.peer_connection import PeerConnection
 from peer.request_pipeline import RequestPipeline
-from peer.choke_manager import ChokeManager
 from pieces.piece_manager import PieceManager
+
 
 class SessionManager:
     """

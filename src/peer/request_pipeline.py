@@ -1,5 +1,6 @@
-import struct
 import asyncio
+import struct
+
 from .message_types import MessageID, BLOCK_LEN
 
 

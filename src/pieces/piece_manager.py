@@ -1,7 +1,8 @@
+import asyncio
 import hashlib
 import os
-import asyncio
 from pathlib import Path
+
 from peer.message_types import BLOCK_LEN
 
 

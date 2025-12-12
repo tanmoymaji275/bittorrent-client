@@ -1,9 +1,11 @@
-import random
 import asyncio
+import random
 from typing import List
-from .peer_connection import PeerConnection
+
 from .message_types import MessageID
+from .peer_connection import PeerConnection
 from .peer_scorer import PeerScorer
+
 
 class ChokeManager:
     """

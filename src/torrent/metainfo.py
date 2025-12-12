@@ -1,7 +1,12 @@
+"""
+Parses .torrent files and extracts metadata.
+"""
 import hashlib
-from pathlib import Path
-from bencode import *
 import re
+from pathlib import Path
+
+from bencode import decode
+from bencode.structure import BencodeDict, BencodeList, BencodeString
 
 
 def extract_info_bytes(raw: bytes) -> bytes:

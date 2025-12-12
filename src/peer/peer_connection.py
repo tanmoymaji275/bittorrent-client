@@ -1,8 +1,10 @@
 import asyncio
 import struct
 import time
-from .peer_protocol import build_handshake, parse_handshake, build_message, HANDSHAKE_LEN
+
 from .message_types import MessageID
+from .peer_protocol import build_handshake, parse_handshake, build_message, HANDSHAKE_LEN
+
 
 class PeerConnection:
     def __init__(self, ip, port, torrent_meta, peer_id):

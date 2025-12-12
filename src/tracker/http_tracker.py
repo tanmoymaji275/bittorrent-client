@@ -1,9 +1,12 @@
-import aiohttp
 # import urllib.parse
 from typing import List, Tuple
+
+import aiohttp
+
 from bencode import decode
 from bencode.structure import BencodeDict, BencodeList, BencodeInt, BencodeString
 from .utils import compact_to_peers
+
 
 class HTTPTrackerClient:
     def __init__(self, torrent_meta, peer_id: bytes, port=6881, url: str = None):

@@ -1,9 +1,13 @@
+"""
+UDP Tracker Client implementation using asyncio DatagramProtocol.
+"""
+import asyncio
+import random
 import socket
 import struct
-import random
 import urllib.parse
-import asyncio
 from typing import List, Tuple, Optional
+
 from .utils import compact_to_peers
 
 
@@ -51,7 +55,7 @@ class UDPTrackerProtocol(asyncio.DatagramProtocol):
                 self.on_timeout()
                 raise
         else:
-             raise RuntimeError("Transport not connected")
+            raise RuntimeError("Transport not connected")
 
 
 class UDPTrackerClient:
@@ -62,24 +66,24 @@ class UDPTrackerClient:
         self.timeout = timeout
         self.protocol: Optional[UDPTrackerProtocol] = None
         self.transport: Optional[asyncio.DatagramTransport] = None
-        
+
         self.url = url if url else torrent_meta.announce
         if not self.url:
             if torrent_meta.announce_list:
-                 self.url = torrent_meta.announce_list[0][0]
+                self.url = torrent_meta.announce_list[0][0]
             else:
-                 raise ValueError("No announce URL provided for UDPTrackerClient")
+                raise ValueError("No announce URL provided for UDPTrackerClient")
 
         parsed = urllib.parse.urlparse(self.url)
         self.host = parsed.hostname
         self.tracker_port = parsed.port or 80
-        
+
         # Resolve IP to avoid WinError 10022 on Windows with asyncio UDP
         try:
             self.host_ip = socket.gethostbyname(self.host)
         except socket.error as e:
             print(f"[Tracker] Could not resolve {self.host}: {e}")
-            self.host_ip = self.host 
+            self.host_ip = self.host
 
     @staticmethod
     def _compact_to_peers(blob: bytes) -> List[Tuple[str, int]]:
@@ -108,7 +112,7 @@ class UDPTrackerClient:
         transaction_id = random.randint(0, 2**31 - 1)
 
         req = struct.pack(">QII", protocol_id, action, transaction_id)
-        
+
         try:
             resp = await self.protocol.send_and_receive(req, (self.host_ip, self.tracker_port), self.timeout)
         except asyncio.TimeoutError:

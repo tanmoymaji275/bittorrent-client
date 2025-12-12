@@ -1,5 +1,6 @@
 import struct
 from typing import Tuple, Optional
+
 from .message_types import MessageID
 
 PROTOCOL_STR = b"BitTorrent protocol"
