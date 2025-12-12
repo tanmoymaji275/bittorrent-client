@@ -36,12 +36,25 @@ async def main():
         session.add_peer(ip, port) 
         for ip, port in peers[:50]
     ]
-    # We don't strictly need to wait for all connections to finish before continuing,
-    # but we do need to keep the main loop alive.
-    await asyncio.gather(*connect_tasks)
+    connect_future = asyncio.gather(*connect_tasks)
 
-    # Wait for the download to complete
-    await session_task
+    # Race between session completion (download done) and connection attempts
+    done, pending = await asyncio.wait(
+        [session_task, connect_future],
+        return_when=asyncio.FIRST_COMPLETED
+    )
+
+    # If session finished early (e.g. resume complete), cancel pending connections
+    if session_task in done:
+        if not connect_future.done():
+            connect_future.cancel()
+            try:
+                await connect_future
+            except asyncio.CancelledError:
+                pass
+    else:
+        # Connections finished, now wait for session to complete
+        await session_task
 
 
 if __name__ == "__main__":
