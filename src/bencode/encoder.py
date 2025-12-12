@@ -12,8 +12,10 @@ def encode(obj) -> bytes:
         return encode_int(value)
     
     if isinstance(obj, (str, BencodeString)):
-        value = obj if isinstance(obj, str) else obj.value
-        return encode_str(value)
+        if isinstance(obj, str):
+            return encode_str(obj)
+        # BencodeString wraps bytes
+        return encode_bytes(obj.value)
     
     if isinstance(obj, bytes):
         return encode_bytes(obj)

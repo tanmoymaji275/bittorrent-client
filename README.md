@@ -23,15 +23,29 @@ A high-performance, asynchronous BitTorrent client implementation in Python 3. I
     ```
 
 2.  **Set up a virtual environment (recommended):**
-    ```bash
-    python -m venv .venv
-    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-    ```
+    
+    *   **Windows (PowerShell):**
+        ```powershell
+        python -m venv .venv
+        .venv\Scripts\Activate.ps1
+        ```
+    
+    *   **Linux / macOS:**
+        ```bash
+        python3 -m venv .venv
+        source .venv/bin/activate
+        ```
 
 3.  **Install dependencies:**
-    ```bash
-    pip install aiohttp
-    ```
+    
+    *   **Runtime:**
+        ```bash
+        pip install aiohttp
+        ```
+    *   **Development (Optional):**
+        ```bash
+        pip install pytest pytest-asyncio pylint
+        ```
 
 ## Usage
 

@@ -1,2 +1,4 @@
-/tests/
 /torrents/
+/downloads/
+/downloads_test/
+/.venv/
