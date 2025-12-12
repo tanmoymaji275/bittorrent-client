@@ -98,6 +98,8 @@ class PieceManager:
         return self.meta.total_length - self.meta.piece_length * (self.num_pieces - 1)
 
     def piece_complete(self, idx):
+        if self.completed[idx]:
+            return True
         piece_len = self.get_piece_length(idx)
         offset = 0
         while offset < piece_len:
@@ -163,7 +165,8 @@ class PieceManager:
             bytes_to_write = min(f_end - piece_start, remaining)
 
             out_path = self.download_dir / f["path"]
-            with open(out_path, "r+b" if out_path.exists() else "wb") as fp:
+            mode = "r+b" if out_path.exists() else "wb"
+            with out_path.open(mode) as fp:
                 fp.seek(write_start)
                 fp.write(bytes_data[src_pos: src_pos + bytes_to_write])
 
@@ -200,7 +203,7 @@ class PieceManager:
             out_path = self.download_dir / f["path"]
             
             try:
-                with open(out_path, "rb") as fp:
+                with out_path.open("rb") as fp:
                     fp.seek(read_file_offset)
                     chunk = fp.read(read_count)
                     if len(chunk) != read_count:
