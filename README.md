@@ -74,7 +74,7 @@ The project is structured into modular components:
 *   **`src/tracker/`**: Clients for HTTP and UDP trackers.
 *   **`src/bencode/`**: Utilities for parsing Bencoded data.
 
-See `src/README.md` for a deeper dive into the code structure.
+[See src/README.md for a deeper dive into the code structure.](src/README.md)
 
 ## Development
 
